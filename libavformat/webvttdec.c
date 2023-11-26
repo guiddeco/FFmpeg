@@ -61,7 +61,7 @@ static int64_t read_ts(const char *s)
 static int webvtt_read_header(AVFormatContext *s)
 {
     WebVTTContext *webvtt = s->priv_data;
-    AVBPrint cue;
+    AVBPrint cue, header;
     int res = 0;
     AVStream *st = avformat_new_stream(s, NULL);
 
@@ -73,6 +73,7 @@ static int webvtt_read_header(AVFormatContext *s)
     st->disposition |= webvtt->kind;
 
     av_bprint_init(&cue,    0, AV_BPRINT_SIZE_UNLIMITED);
+    av_bprint_init(&header, 0, AV_BPRINT_SIZE_UNLIMITED);
 
     for (;;) {
         int i;
@@ -99,6 +100,12 @@ static int webvtt_read_header(AVFormatContext *s)
             !strncmp(p, "REGION", 6) ||
             !strncmp(p, "NOTE", 4))
             continue;
+        
+         /* store the style and region blocks from the header */
+        if (!strncmp(p, "STYLE", 5) || !strncmp(p, "REGION", 6)) {
+            av_bprintf(&header, "%s%s", header.len ? "\n\n" : "", p);
+            continue;
+        }
 
         /* optional cue identifier (can be a number like in SRT or some kind of
          * chaptering id) */
@@ -165,11 +172,15 @@ static int webvtt_read_header(AVFormatContext *s)
         SET_SIDE_DATA(identifier, AV_PKT_DATA_WEBVTT_IDENTIFIER);
         SET_SIDE_DATA(settings,   AV_PKT_DATA_WEBVTT_SETTINGS);
     }
+    res = ff_bprint_to_codecpar_extradata(st->codecpar, &header);
+    if (res < 0)
+        goto end;
 
     ff_subtitles_queue_finalize(s, &webvtt->q);
 
 end:
     av_bprint_finalize(&cue,    NULL);
+    av_bprint_finalize(&header, NULL);
     return res;
 }
 

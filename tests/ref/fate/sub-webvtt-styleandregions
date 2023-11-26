@@ -1,0 +1,51 @@
+WEBVTT
+
+REGION
+id:son
+width:40%
+lines:3
+regionanchor:20%,80%
+viewportanchor:20%,80%
+scroll:up
+
+REGION
+id:father
+width:40%
+lines:3
+regionanchor:80%,80%
+viewportanchor:80%,80%
+scroll:up
+
+STYLE
+::cue(i) {
+  /* make i tags italic */
+  font-style: italic
+}
+
+STYLE
+::cue(v[voice="Son"]) {
+  color: magenta
+}
+
+STYLE
+::cue(v[voice="Father"]) {
+  color: yellow
+}
+
+00:10.000 --> 00:25.000 region:son align:left
+<v Son>Can I tell you a joke, Dad?
+
+00:12.500 --> 00:27.500 region:father align:right
+<v Father>Sure, I could do with a laugh.
+
+00:15.000 --> 00:30.000 region:son align:left
+<v Son>Where do sheep go to get their hair cut?
+
+00:17.500 --> 00:32.500 region:father align:right
+<v Father>I don't know, son. Where do sheep go to get their hair cut?
+
+00:20.000 --> 00:35.000 region:son align:left
+<v Son>To the baa-baa shop!
+
+00:22.500 --> 00:37.500 region:father align:right
+<v Father><i>[facepalms]</i>
