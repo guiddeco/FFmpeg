@@ -10,6 +10,7 @@
 #include "libavutil/mem_internal.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
+#include "libavfilter/formats.h"
 #include "avfilter.h"
 #include "filters.h"
 #include "gradfun.h"
