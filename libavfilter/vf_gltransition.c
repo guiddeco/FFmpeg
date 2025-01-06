@@ -5,7 +5,6 @@
  */
 
 #include "libavutil/opt.h"
-#include "internal.h"
 #include "framesync.h"
 
 #ifndef __APPLE__
