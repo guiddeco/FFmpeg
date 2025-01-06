@@ -47,6 +47,7 @@ static void webvtt_write_time(AVIOContext *pb, int64_t millisec)
 static int webvtt_write_header(AVFormatContext *ctx)
 {
     AVStream     *s = ctx->streams[0];
+    AVCodecParameters *par = ctx->streams[0]->codecpar;
     AVIOContext *pb = ctx->pb;
 
     avpriv_set_pts_info(s, 64, 1, 1000);
