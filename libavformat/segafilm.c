@@ -28,9 +28,10 @@
  */
 
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
-#include "avio_internal.h"
 
 #define FILM_TAG MKBETAG('F', 'I', 'L', 'M')
 #define FDSC_TAG MKBETAG('F', 'D', 'S', 'C')
@@ -177,20 +178,20 @@ static int film_read_header(AVFormatContext *s)
         st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
         st->codecpar->codec_id = film->audio_type;
         st->codecpar->codec_tag = 1;
-        st->codecpar->channels = film->audio_channels;
+        st->codecpar->ch_layout.nb_channels = film->audio_channels;
         st->codecpar->sample_rate = film->audio_samplerate;
 
         if (film->audio_type == AV_CODEC_ID_ADPCM_ADX) {
             st->codecpar->bits_per_coded_sample = 18 * 8 / 32;
-            st->codecpar->block_align = st->codecpar->channels * 18;
+            st->codecpar->block_align = film->audio_channels * 18;
             ffstream(st)->need_parsing = AVSTREAM_PARSE_FULL;
         } else {
             st->codecpar->bits_per_coded_sample = film->audio_bits;
-            st->codecpar->block_align = st->codecpar->channels *
+            st->codecpar->block_align = film->audio_channels *
                 st->codecpar->bits_per_coded_sample / 8;
         }
 
-        st->codecpar->bit_rate = st->codecpar->channels * st->codecpar->sample_rate *
+        st->codecpar->bit_rate = film->audio_channels * st->codecpar->sample_rate *
             st->codecpar->bits_per_coded_sample;
     }
 
@@ -233,6 +234,7 @@ static int film_read_header(AVFormatContext *s)
             else if (film->audio_type != AV_CODEC_ID_NONE)
                 audio_frame_counter += (film->sample_table[i].sample_size /
                     (film->audio_channels * film->audio_bits / 8));
+            film->sample_table[i].keyframe = 1;
         } else {
             film->sample_table[i].stream = film->video_stream_index;
             film->sample_table[i].pts = AV_RB32(&scratch[8]) & 0x7FFFFFFF;
@@ -324,11 +326,11 @@ static int film_read_seek(AVFormatContext *s, int stream_index, int64_t timestam
     return 0;
 }
 
-const AVInputFormat ff_segafilm_demuxer = {
-    .name           = "film_cpk",
-    .long_name      = NULL_IF_CONFIG_SMALL("Sega FILM / CPK"),
+const FFInputFormat ff_segafilm_demuxer = {
+    .p.name         = "film_cpk",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Sega FILM / CPK"),
     .priv_data_size = sizeof(FilmDemuxContext),
-    .flags_internal = FF_FMT_INIT_CLEANUP,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .read_probe     = film_probe,
     .read_header    = film_read_header,
     .read_packet    = film_read_packet,

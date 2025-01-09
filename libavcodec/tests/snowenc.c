@@ -26,6 +26,7 @@
 
 #include "libavutil/lfg.h"
 #include "libavutil/mathematics.h"
+#include "libavutil/mem.h"
 
 int main(void){
 #define width  256
@@ -35,9 +36,9 @@ int main(void){
     SnowContext s;
     int i;
     AVLFG prng;
+    int ret = 0;
     s.spatial_decomposition_count=6;
     s.spatial_decomposition_type=1;
-    int ret = 0;
 
     s.temp_dwt_buffer  = av_calloc(width, sizeof(*s.temp_dwt_buffer));
     s.temp_idwt_buffer = av_calloc(width, sizeof(*s.temp_idwt_buffer));
@@ -126,16 +127,6 @@ int main(void){
         }
         printf("};\n");
         {
-            int level=2;
-            int w= width  >> (s.spatial_decomposition_count-level);
-            //int h= height >> (s.spatial_decomposition_count-level);
-            int stride= width  << (s.spatial_decomposition_count-level);
-            DWTELEM *buf= buffer[0];
-            int64_t error=0;
-
-            buf+=w;
-            buf+=stride>>1;
-
             memset(buffer[0], 0, sizeof(int)*width*height);
             for(y=0; y<height; y++){
                 for(x=0; x<width; x++){
@@ -147,7 +138,6 @@ int main(void){
             for(y=0; y<height; y++){
                 for(x=0; x<width; x++){
                     int64_t d= buffer[0][x + y*width];
-                    error += d*d;
                     if(FFABS(width/2-x)<9 && FFABS(height/2-y)<9) printf("%8"PRId64" ", d);
                 }
                 if(FFABS(height/2-y)<9) printf("\n");

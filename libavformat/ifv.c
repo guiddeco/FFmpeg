@@ -21,7 +21,9 @@
  */
 
 #include "libavutil/channel_layout.h"
+#include "libavutil/dict_internal.h"
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 #include "avio_internal.h"
 
@@ -155,8 +157,7 @@ static int ifv_read_header(AVFormatContext *s)
 
         st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
         st->codecpar->codec_id = AV_CODEC_ID_PCM_S16LE;
-        st->codecpar->channels = 1;
-        st->codecpar->channel_layout = AV_CH_LAYOUT_MONO;
+        st->codecpar->ch_layout = (AVChannelLayout)AV_CHANNEL_LAYOUT_MONO;
         st->codecpar->sample_rate = ifv->sample_rate;
         ifv->audio_stream_index = st->index;
 
@@ -309,11 +310,11 @@ static int ifv_read_seek(AVFormatContext *s, int stream_index, int64_t ts, int f
     return 0;
 }
 
-const AVInputFormat ff_ifv_demuxer = {
-    .name           = "ifv",
-    .long_name      = NULL_IF_CONFIG_SMALL("IFV CCTV DVR"),
+const FFInputFormat ff_ifv_demuxer = {
+    .p.name         = "ifv",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("IFV CCTV DVR"),
+    .p.extensions   = "ifv",
     .priv_data_size = sizeof(IFVContext),
-    .extensions     = "ifv",
     .read_probe     = ifv_probe,
     .read_header    = ifv_read_header,
     .read_packet    = ifv_read_packet,

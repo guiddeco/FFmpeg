@@ -31,7 +31,9 @@
 #include "libavutil/channel_layout.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/dict.h"
+#include "libavutil/mem.h"
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 
 #define FORM_TAG MKTAG('F', 'O', 'R', 'M')
@@ -54,7 +56,6 @@
 
 /* always use the same PCM audio parameters */
 #define WC3_SAMPLE_RATE 22050
-#define WC3_AUDIO_CHANNELS 1
 #define WC3_AUDIO_BITS 16
 
 /* nice, constant framerate */
@@ -195,13 +196,12 @@ static int wc3_read_header(AVFormatContext *s)
     st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
     st->codecpar->codec_id = AV_CODEC_ID_PCM_S16LE;
     st->codecpar->codec_tag = 1;
-    st->codecpar->channels = WC3_AUDIO_CHANNELS;
-    st->codecpar->channel_layout = AV_CH_LAYOUT_MONO;
+    st->codecpar->ch_layout = (AVChannelLayout)AV_CHANNEL_LAYOUT_MONO;
     st->codecpar->bits_per_coded_sample = WC3_AUDIO_BITS;
     st->codecpar->sample_rate = WC3_SAMPLE_RATE;
-    st->codecpar->bit_rate = st->codecpar->channels * st->codecpar->sample_rate *
+    st->codecpar->bit_rate = st->codecpar->ch_layout.nb_channels * st->codecpar->sample_rate *
         st->codecpar->bits_per_coded_sample;
-    st->codecpar->block_align = WC3_AUDIO_BITS * WC3_AUDIO_CHANNELS;
+    st->codecpar->block_align = WC3_AUDIO_BITS * st->codecpar->ch_layout.nb_channels;
 
     return 0;
 }
@@ -295,11 +295,11 @@ static int wc3_read_packet(AVFormatContext *s,
     return ret;
 }
 
-const AVInputFormat ff_wc3_demuxer = {
-    .name           = "wc3movie",
-    .long_name      = NULL_IF_CONFIG_SMALL("Wing Commander III movie"),
+const FFInputFormat ff_wc3_demuxer = {
+    .p.name         = "wc3movie",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Wing Commander III movie"),
     .priv_data_size = sizeof(Wc3DemuxContext),
-    .flags_internal = FF_FMT_INIT_CLEANUP,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .read_probe     = wc3_probe,
     .read_header    = wc3_read_header,
     .read_packet    = wc3_read_packet,

@@ -18,7 +18,7 @@ BIN2C = $(BIN2CEXE)
 ifndef V
 Q      = @
 ECHO   = printf "$(1)\t%s\n" $(2)
-BRIEF  = CC CXX OBJCC HOSTCC HOSTLD AS X86ASM AR LD STRIP CP WINDRES NVCC BIN2C
+BRIEF  = CC CXX OBJCC HOSTCC HOSTLD AS X86ASM AR LD STRIP CP WINDRES NVCC BIN2C METALCC METALLIB
 SILENT = DEPCC DEPHOSTCC DEPAS DEPX86ASM RANLIB RM
 
 MSG    = $@
@@ -29,7 +29,8 @@ $(foreach VAR,$(SILENT),$(eval override $(VAR) = @$($(VAR))))
 $(eval INSTALL = @$(call ECHO,INSTALL,$$(^:$(SRC_DIR)/%=%)); $(INSTALL))
 endif
 
-ALLFFLIBS = avcodec avdevice avfilter avformat avutil postproc swscale swresample
+# Prepend to a recursively expanded variable without making it simply expanded.
+PREPEND = $(eval $(1) = $(patsubst %,$$(%), $(2)) $(value $(1)))
 
 # NASM requires -I path terminated with /
 IFLAGS     := -I. -I$(SRC_LINK)/
@@ -39,7 +40,9 @@ CCFLAGS     = $(CPPFLAGS) $(CFLAGS)
 OBJCFLAGS  += $(EOBJCFLAGS)
 OBJCCFLAGS  = $(CPPFLAGS) $(CFLAGS) $(OBJCFLAGS)
 ASFLAGS    := $(CPPFLAGS) $(ASFLAGS)
-CXXFLAGS   := $(CPPFLAGS) $(CFLAGS) $(CXXFLAGS)
+# Use PREPEND here so that later (target-dependent) additions to CPPFLAGS
+# end up in CXXFLAGS.
+$(call PREPEND,CXXFLAGS, CPPFLAGS CFLAGS)
 X86ASMFLAGS += $(IFLAGS:%=%/) -I$(<D)/ -Pconfig.asm
 
 HOSTCCFLAGS = $(IFLAGS) $(HOSTCPPFLAGS) $(HOSTCFLAGS)
@@ -127,7 +130,7 @@ $(BIN2CEXE): ffbuild/bin2c_host.o
 ifdef CONFIG_PTX_COMPRESSION
 %.ptx.gz: TAG = GZIP
 %.ptx.gz: %.ptx
-	$(M)gzip -c9 $(patsubst $(SRC_PATH)/%,$(SRC_LINK)/%,$<) >$@
+	$(M)gzip -nc9 $(patsubst $(SRC_PATH)/%,$(SRC_LINK)/%,$<) >$@
 
 %.ptx.c: %.ptx.gz $(BIN2CEXE)
 	$(BIN2C) $(patsubst $(SRC_PATH)/%,$(SRC_LINK)/%,$<) $@ $(subst .,_,$(basename $(notdir $@)))
@@ -137,7 +140,7 @@ else
 endif
 
 clean::
-	$(RM) $(BIN2CEXE)
+	$(RM) $(BIN2CEXE) $(CLEANSUFFIXES:%=ffbuild/%)
 
 %.c %.h %.pc %.ver %.version: TAG = GEN
 

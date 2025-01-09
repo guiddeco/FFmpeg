@@ -29,10 +29,12 @@
 #include "libavutil/dict.h"
 #include "libavutil/internal.h"
 #include "libavutil/mathematics.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "avformat.h"
 #include "avio_internal.h"
 #include "avlanguage.h"
+#include "demux.h"
 #include "internal.h"
 #include "riff.h"
 #include "asf.h"
@@ -270,7 +272,7 @@ finish:
     avio_seek(s->pb, off + len, SEEK_SET);
 }
 
-static int asf_read_file_properties(AVFormatContext *s, int64_t size)
+static int asf_read_file_properties(AVFormatContext *s)
 {
     ASFContext *asf = s->priv_data;
     AVIOContext *pb = s->pb;
@@ -444,6 +446,8 @@ static int asf_read_stream_properties(AVFormatContext *s, int64_t size)
 
         st->codecpar->codec_tag = tag1;
         st->codecpar->codec_id  = ff_codec_get_id(ff_codec_bmp_tags, tag1);
+        if (!st->codecpar->codec_id)
+            st->codecpar->codec_id = ff_codec_get_id(ff_codec_bmp_tags_unofficial, tag1);
         if (tag1 == MKTAG('D', 'V', 'R', ' ')) {
             sti->need_parsing = AVSTREAM_PARSE_FULL;
             /* issue658 contains wrong w/h and MS even puts a fake seq header
@@ -457,7 +461,9 @@ static int asf_read_stream_properties(AVFormatContext *s, int64_t size)
         if (st->codecpar->codec_id == AV_CODEC_ID_H264)
             sti->need_parsing = AVSTREAM_PARSE_FULL_ONCE;
         if (st->codecpar->codec_id == AV_CODEC_ID_MPEG4)
-            sti->need_parsing = AVSTREAM_PARSE_FULL_ONCE;
+            sti->need_parsing = AVSTREAM_PARSE_FULL;
+        if (st->codecpar->codec_id == AV_CODEC_ID_HEVC)
+            sti->need_parsing = AVSTREAM_PARSE_FULL;
     }
     pos2 = avio_tell(pb);
     avio_skip(pb, size - (pos2 - pos1 + 24));
@@ -465,7 +471,7 @@ static int asf_read_stream_properties(AVFormatContext *s, int64_t size)
     return 0;
 }
 
-static int asf_read_ext_stream_properties(AVFormatContext *s, int64_t size)
+static int asf_read_ext_stream_properties(AVFormatContext *s)
 {
     ASFContext *asf = s->priv_data;
     AVIOContext *pb = s->pb;
@@ -525,7 +531,7 @@ static int asf_read_ext_stream_properties(AVFormatContext *s, int64_t size)
     return 0;
 }
 
-static int asf_read_content_desc(AVFormatContext *s, int64_t size)
+static int asf_read_content_desc(AVFormatContext *s)
 {
     AVIOContext *pb = s->pb;
     int len1, len2, len3, len4, len5;
@@ -544,7 +550,7 @@ static int asf_read_content_desc(AVFormatContext *s, int64_t size)
     return 0;
 }
 
-static int asf_read_ext_content_desc(AVFormatContext *s, int64_t size)
+static int asf_read_ext_content_desc(AVFormatContext *s)
 {
     AVIOContext *pb = s->pb;
     ASFContext *asf = s->priv_data;
@@ -578,7 +584,7 @@ static int asf_read_ext_content_desc(AVFormatContext *s, int64_t size)
     return 0;
 }
 
-static int asf_read_language_list(AVFormatContext *s, int64_t size)
+static int asf_read_language_list(AVFormatContext *s)
 {
     AVIOContext *pb = s->pb;
     ASFContext *asf = s->priv_data;
@@ -598,7 +604,7 @@ static int asf_read_language_list(AVFormatContext *s, int64_t size)
     return 0;
 }
 
-static int asf_read_metadata(AVFormatContext *s, int64_t size)
+static int asf_read_metadata(AVFormatContext *s)
 {
     AVIOContext *pb = s->pb;
     ASFContext *asf = s->priv_data;
@@ -646,7 +652,7 @@ static int asf_read_metadata(AVFormatContext *s, int64_t size)
     return 0;
 }
 
-static int asf_read_marker(AVFormatContext *s, int64_t size)
+static int asf_read_marker(AVFormatContext *s)
 {
     AVIOContext *pb = s->pb;
     ASFContext *asf = s->priv_data;
@@ -669,7 +675,7 @@ static int asf_read_marker(AVFormatContext *s, int64_t size)
 
         avio_rl64(pb);             // offset, 8 bytes
         pres_time = avio_rl64(pb); // presentation time
-        pres_time -= asf->hdr.preroll * 10000;
+        pres_time = av_sat_sub64(pres_time, asf->hdr.preroll * 10000LL);
         avio_rl16(pb);             // entry length
         avio_rl32(pb);             // send time
         avio_rl32(pb);             // flags
@@ -725,21 +731,21 @@ static int asf_read_header(AVFormatContext *s)
         if (gsize < 24)
             return AVERROR_INVALIDDATA;
         if (!ff_guidcmp(&g, &ff_asf_file_header)) {
-            ret = asf_read_file_properties(s, gsize);
+            ret = asf_read_file_properties(s);
         } else if (!ff_guidcmp(&g, &ff_asf_stream_header)) {
             ret = asf_read_stream_properties(s, gsize);
         } else if (!ff_guidcmp(&g, &ff_asf_comment_header)) {
-            asf_read_content_desc(s, gsize);
+            asf_read_content_desc(s);
         } else if (!ff_guidcmp(&g, &ff_asf_language_guid)) {
-            asf_read_language_list(s, gsize);
+            asf_read_language_list(s);
         } else if (!ff_guidcmp(&g, &ff_asf_extended_content_header)) {
-            asf_read_ext_content_desc(s, gsize);
+            asf_read_ext_content_desc(s);
         } else if (!ff_guidcmp(&g, &ff_asf_metadata_header)) {
-            asf_read_metadata(s, gsize);
+            asf_read_metadata(s);
         } else if (!ff_guidcmp(&g, &ff_asf_metadata_library_header)) {
-            asf_read_metadata(s, gsize);
+            asf_read_metadata(s);
         } else if (!ff_guidcmp(&g, &ff_asf_ext_stream_header)) {
-            asf_read_ext_stream_properties(s, gsize);
+            asf_read_ext_stream_properties(s);
 
             // there could be an optional stream properties object to follow
             // if so the next iteration will pick it up
@@ -749,7 +755,7 @@ static int asf_read_header(AVFormatContext *s)
             avio_skip(pb, 6);
             continue;
         } else if (!ff_guidcmp(&g, &ff_asf_marker_header)) {
-            asf_read_marker(s, gsize);
+            asf_read_marker(s);
         } else if (avio_feof(pb)) {
             return AVERROR_EOF;
         } else {
@@ -1612,9 +1618,11 @@ static int asf_read_seek(AVFormatContext *s, int stream_index,
     return 0;
 }
 
-const AVInputFormat ff_asf_demuxer = {
-    .name           = "asf",
-    .long_name      = NULL_IF_CONFIG_SMALL("ASF (Advanced / Active Streaming Format)"),
+const FFInputFormat ff_asf_demuxer = {
+    .p.name         = "asf",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("ASF (Advanced / Active Streaming Format)"),
+    .p.flags        = AVFMT_NOBINSEARCH | AVFMT_NOGENSEARCH,
+    .p.priv_class   = &asf_class,
     .priv_data_size = sizeof(ASFContext),
     .read_probe     = asf_probe,
     .read_header    = asf_read_header,
@@ -1622,6 +1630,4 @@ const AVInputFormat ff_asf_demuxer = {
     .read_close     = asf_read_close,
     .read_seek      = asf_read_seek,
     .read_timestamp = asf_read_pts,
-    .flags          = AVFMT_NOBINSEARCH | AVFMT_NOGENSEARCH,
-    .priv_class     = &asf_class,
 };

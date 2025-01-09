@@ -19,11 +19,11 @@
  */
 
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/opt.h"
 #include "avfilter.h"
-#include "formats.h"
-#include "internal.h"
+#include "filters.h"
 #include "video.h"
 
 typedef struct TMidEqualizerContext {
@@ -178,6 +178,8 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         } else {
             s->l_frames++;
         }
+        if (!s->frames[idx])
+            return AVERROR_EOF;
         in = av_frame_clone(s->frames[idx]);
         if (!in)
             return AVERROR(ENOMEM);

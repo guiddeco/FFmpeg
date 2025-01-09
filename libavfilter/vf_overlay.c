@@ -35,7 +35,7 @@
 #include "libavutil/mathematics.h"
 #include "libavutil/opt.h"
 #include "libavutil/timestamp.h"
-#include "internal.h"
+#include "filters.h"
 #include "drawutils.h"
 #include "framesync.h"
 #include "video.h"
@@ -55,7 +55,9 @@ static const char *const var_names[] = {
     "x",
     "y",
     "n",            ///< number of frame
+#if FF_API_FRAME_PKT
     "pos",          ///< position in the file
+#endif
     "t",            ///< timestamp expressed in seconds
     NULL
 };
@@ -154,14 +156,16 @@ static int process_command(AVFilterContext *ctx, const char *cmd, const char *ar
 
 static const enum AVPixelFormat alpha_pix_fmts[] = {
     AV_PIX_FMT_YUVA420P, AV_PIX_FMT_YUVA422P, AV_PIX_FMT_YUVA444P,
-    AV_PIX_FMT_YUVA420P10, AV_PIX_FMT_YUVA422P10,
+    AV_PIX_FMT_YUVA420P10, AV_PIX_FMT_YUVA422P10, AV_PIX_FMT_YUVA444P10,
     AV_PIX_FMT_ARGB, AV_PIX_FMT_ABGR, AV_PIX_FMT_RGBA,
     AV_PIX_FMT_BGRA, AV_PIX_FMT_GBRAP, AV_PIX_FMT_NONE
 };
 
-static int query_formats(AVFilterContext *ctx)
+static int query_formats(const AVFilterContext *ctx,
+                         AVFilterFormatsConfig **cfg_in,
+                         AVFilterFormatsConfig **cfg_out)
 {
-    OverlayContext *s = ctx->priv;
+    const OverlayContext *s = ctx->priv;
 
     /* overlay formats contains alpha, for avoiding conversion with alpha information loss */
     static const enum AVPixelFormat main_pix_fmts_yuv420[] = {
@@ -200,6 +204,13 @@ static int query_formats(AVFilterContext *ctx)
     };
     static const enum AVPixelFormat overlay_pix_fmts_yuv444[] = {
         AV_PIX_FMT_YUVA444P, AV_PIX_FMT_NONE
+    };
+
+    static const enum AVPixelFormat main_pix_fmts_yuv444p10[] = {
+        AV_PIX_FMT_YUV444P10, AV_PIX_FMT_YUVA444P10, AV_PIX_FMT_NONE
+    };
+    static const enum AVPixelFormat overlay_pix_fmts_yuv444p10[] = {
+        AV_PIX_FMT_YUVA444P10, AV_PIX_FMT_NONE
     };
 
     static const enum AVPixelFormat main_pix_fmts_gbrp[] = {
@@ -246,6 +257,10 @@ static int query_formats(AVFilterContext *ctx)
         main_formats    = main_pix_fmts_yuv444;
         overlay_formats = overlay_pix_fmts_yuv444;
         break;
+    case OVERLAY_FORMAT_YUV444P10:
+        main_formats    = main_pix_fmts_yuv444p10;
+        overlay_formats = overlay_pix_fmts_yuv444p10;
+        break;
     case OVERLAY_FORMAT_RGB:
         main_formats    = main_pix_fmts_rgb;
         overlay_formats = overlay_pix_fmts_rgb;
@@ -255,18 +270,18 @@ static int query_formats(AVFilterContext *ctx)
         overlay_formats = overlay_pix_fmts_gbrp;
         break;
     case OVERLAY_FORMAT_AUTO:
-        return ff_set_common_formats_from_list(ctx, alpha_pix_fmts);
+        return ff_set_common_formats_from_list2(ctx, cfg_in, cfg_out, alpha_pix_fmts);
     default:
         av_assert0(0);
     }
 
     formats = ff_make_format_list(main_formats);
-    if ((ret = ff_formats_ref(formats, &ctx->inputs[MAIN]->outcfg.formats)) < 0 ||
-        (ret = ff_formats_ref(formats, &ctx->outputs[MAIN]->incfg.formats)) < 0)
+    if ((ret = ff_formats_ref(formats, &cfg_in[MAIN]->formats)) < 0 ||
+        (ret = ff_formats_ref(formats, &cfg_out[MAIN]->formats)) < 0)
         return ret;
 
     return ff_formats_ref(ff_make_format_list(overlay_formats),
-                          &ctx->inputs[OVERLAY]->outcfg.formats);
+                          &cfg_in[OVERLAY]->formats);
 }
 
 static int config_input_overlay(AVFilterLink *inlink)
@@ -290,7 +305,9 @@ static int config_input_overlay(AVFilterLink *inlink)
     s->var_values[VAR_Y]     = NAN;
     s->var_values[VAR_N]     = 0;
     s->var_values[VAR_T]     = NAN;
+#if FF_API_FRAME_PKT
     s->var_values[VAR_POS]   = NAN;
+#endif
 
     if ((ret = set_expr(&s->x_pexpr,      s->x_expr,      "x",      ctx)) < 0 ||
         (ret = set_expr(&s->y_pexpr,      s->y_expr,      "y",      ctx)) < 0)
@@ -538,12 +555,13 @@ static av_always_inline void blend_plane_##depth##_##nbits##bits(AVFilterContext
                     if (i && yuv)                                                                          \
                         *d = av_clip((*d * (max - alpha) + *s * alpha) / max + *s - mid, -mid, mid) + mid; \
                     else                                                                                   \
-                        *d = FFMIN((*d * (max - alpha) + *s * alpha) / max + *s, max);                     \
+                        *d = av_clip_uintp2((*d * (max - alpha) + *s * alpha) / max + *s - (16<<(nbits-8)),\
+                                                                                                    nbits);\
                 } else {                                                                                   \
                     if (i && yuv)                                                                          \
                         *d = av_clip(FAST_DIV255((*d - mid) * (max - alpha)) + *s - mid, -mid, mid) + mid; \
                     else                                                                                   \
-                        *d = FFMIN(FAST_DIV255(*d * (max - alpha)) + *s, max);                             \
+                        *d = av_clip_uint8(FAST_DIV255(*d * (255 - alpha)) + *s - 16);                     \
                 }                                                                                          \
             }                                                                                              \
             s++;                                                                                           \
@@ -674,197 +692,59 @@ static av_always_inline void blend_slice_planar_rgb(AVFilterContext *ctx,
         alpha_composite_8_8bits(src, dst, src_w, src_h, dst_w, dst_h, x, y, jobnr, nb_jobs);
 }
 
-static int blend_slice_yuv420(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_yuv_8_8bits(ctx, td->dst, td->src, 1, 1, 0, s->x, s->y, 1, jobnr, nb_jobs);
-    return 0;
+#define DEFINE_BLEND_SLICE_PLANAR_FMT(format_, blend_slice_fn_suffix_, hsub_, vsub_, main_has_alpha_, direct_) \
+static int blend_slice_##format_(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)           \
+{                                                                       \
+    OverlayContext *s = ctx->priv;                                      \
+    ThreadData *td = arg;                                               \
+    blend_slice_##blend_slice_fn_suffix_(ctx, td->dst, td->src,         \
+                                         hsub_, vsub_, main_has_alpha_, \
+                                         s->x, s->y, direct_,           \
+                                         jobnr, nb_jobs);               \
+    return 0;                                                           \
 }
 
-static int blend_slice_yuva420(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_yuv_8_8bits(ctx, td->dst, td->src, 1, 1, 1, s->x, s->y, 1, jobnr, nb_jobs);
-    return 0;
+//                            FMT          FN             H  V  A  D
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuv420,      yuv_8_8bits,   1, 1, 0, 1);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuva420,     yuv_8_8bits,   1, 1, 1, 1);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuv420p10,   yuv_16_10bits, 1, 1, 0, 1);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuva420p10,  yuv_16_10bits, 1, 1, 1, 1);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuv422p10,   yuv_16_10bits, 1, 0, 0, 1);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuva422p10,  yuv_16_10bits, 1, 0, 1, 1);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuv422,      yuv_8_8bits,   1, 0, 0, 1);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuva422,     yuv_8_8bits,   1, 0, 1, 1);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuv444,      yuv_8_8bits,   0, 0, 0, 1);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuva444,     yuv_8_8bits,   0, 0, 1, 1);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuv444p10,   yuv_16_10bits, 0, 0, 0, 1);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuva444p10,  yuv_16_10bits, 0, 0, 1, 1);
+DEFINE_BLEND_SLICE_PLANAR_FMT(gbrp,        planar_rgb,    0, 0, 0, 1);
+DEFINE_BLEND_SLICE_PLANAR_FMT(gbrap,       planar_rgb,    0, 0, 1, 1);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuv420_pm,   yuv_8_8bits,   1, 1, 0, 0);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuva420_pm,  yuv_8_8bits,   1, 1, 1, 0);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuv422_pm,   yuv_8_8bits,   1, 0, 0, 0);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuva422_pm,  yuv_8_8bits,   1, 0, 1, 0);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuv444_pm,   yuv_8_8bits,   0, 0, 0, 0);
+DEFINE_BLEND_SLICE_PLANAR_FMT(yuva444_pm,  yuv_8_8bits,   0, 0, 1, 0);
+DEFINE_BLEND_SLICE_PLANAR_FMT(gbrp_pm,     planar_rgb,    0, 0, 0, 0);
+DEFINE_BLEND_SLICE_PLANAR_FMT(gbrap_pm,    planar_rgb,    0, 0, 1, 0);
+
+#define DEFINE_BLEND_SLICE_PACKED_FMT(format_, blend_slice_fn_suffix_, main_has_alpha_, direct_) \
+static int blend_slice_##format_(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)        \
+{                                                                       \
+    OverlayContext *s = ctx->priv;                                      \
+    ThreadData *td = arg;                                               \
+    blend_slice_packed_##blend_slice_fn_suffix_(ctx, td->dst, td->src,  \
+                                                main_has_alpha_,        \
+                                                s->x, s->y, direct_,    \
+                                                jobnr, nb_jobs);        \
+    return 0;                                                           \
 }
 
-static int blend_slice_yuv420p10(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_yuv_16_10bits(ctx, td->dst, td->src, 1, 1, 0, s->x, s->y, 1, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_yuva420p10(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_yuv_16_10bits(ctx, td->dst, td->src, 1, 1, 1, s->x, s->y, 1, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_yuv422p10(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_yuv_16_10bits(ctx, td->dst, td->src, 1, 0, 0, s->x, s->y, 1, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_yuva422p10(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_yuv_16_10bits(ctx, td->dst, td->src, 1, 0, 1, s->x, s->y, 1, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_yuv422(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_yuv_8_8bits(ctx, td->dst, td->src, 1, 0, 0, s->x, s->y, 1, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_yuva422(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_yuv_8_8bits(ctx, td->dst, td->src, 1, 0, 1, s->x, s->y, 1, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_yuv444(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_yuv_8_8bits(ctx, td->dst, td->src, 0, 0, 0, s->x, s->y, 1, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_yuva444(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_yuv_8_8bits(ctx, td->dst, td->src, 0, 0, 1, s->x, s->y, 1, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_gbrp(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_planar_rgb(ctx, td->dst, td->src, 0, 0, 0, s->x, s->y, 1, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_gbrap(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_planar_rgb(ctx, td->dst, td->src, 0, 0, 1, s->x, s->y, 1, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_yuv420_pm(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_yuv_8_8bits(ctx, td->dst, td->src, 1, 1, 0, s->x, s->y, 0, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_yuva420_pm(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_yuv_8_8bits(ctx, td->dst, td->src, 1, 1, 1, s->x, s->y, 0, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_yuv422_pm(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_yuv_8_8bits(ctx, td->dst, td->src, 1, 0, 0, s->x, s->y, 0, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_yuva422_pm(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_yuv_8_8bits(ctx, td->dst, td->src, 1, 0, 1, s->x, s->y, 0, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_yuv444_pm(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_yuv_8_8bits(ctx, td->dst, td->src, 0, 0, 0, s->x, s->y, 0, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_yuva444_pm(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_yuv_8_8bits(ctx, td->dst, td->src, 0, 0, 1, s->x, s->y, 0, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_gbrp_pm(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_planar_rgb(ctx, td->dst, td->src, 0, 0, 0, s->x, s->y, 0, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_gbrap_pm(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_planar_rgb(ctx, td->dst, td->src, 0, 0, 1, s->x, s->y, 0, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_rgb(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_packed_rgb(ctx, td->dst, td->src, 0, s->x, s->y, 1, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_rgba(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_packed_rgb(ctx, td->dst, td->src, 1, s->x, s->y, 1, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_rgb_pm(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_packed_rgb(ctx, td->dst, td->src, 0, s->x, s->y, 0, jobnr, nb_jobs);
-    return 0;
-}
-
-static int blend_slice_rgba_pm(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
-{
-    OverlayContext *s = ctx->priv;
-    ThreadData *td = arg;
-    blend_slice_packed_rgb(ctx, td->dst, td->src, 1, s->x, s->y, 0, jobnr, nb_jobs);
-    return 0;
-}
+//                            FMT      FN   A  D
+DEFINE_BLEND_SLICE_PACKED_FMT(rgb,     rgb, 0, 1);
+DEFINE_BLEND_SLICE_PACKED_FMT(rgba,    rgb, 1, 1);
+DEFINE_BLEND_SLICE_PACKED_FMT(rgb_pm,  rgb, 0, 0);
+DEFINE_BLEND_SLICE_PACKED_FMT(rgba_pm, rgb, 1, 0);
 
 static int config_input_main(AVFilterLink *inlink)
 {
@@ -897,6 +777,9 @@ static int config_input_main(AVFilterLink *inlink)
     case OVERLAY_FORMAT_YUV444:
         s->blend_slice = s->main_has_alpha ? blend_slice_yuva444 : blend_slice_yuv444;
         break;
+    case OVERLAY_FORMAT_YUV444P10:
+        s->blend_slice = s->main_has_alpha ? blend_slice_yuva444p10 : blend_slice_yuv444p10;
+        break;
     case OVERLAY_FORMAT_RGB:
         s->blend_slice = s->main_has_alpha ? blend_slice_rgba : blend_slice_rgb;
         break;
@@ -919,6 +802,9 @@ static int config_input_main(AVFilterLink *inlink)
             break;
         case AV_PIX_FMT_YUVA444P:
             s->blend_slice = blend_slice_yuva444;
+            break;
+        case AV_PIX_FMT_YUVA444P10:
+            s->blend_slice = blend_slice_yuva444p10;
             break;
         case AV_PIX_FMT_ARGB:
         case AV_PIX_FMT_RGBA:
@@ -983,9 +869,10 @@ static int config_input_main(AVFilterLink *inlink)
     }
 
 end:
-    if (ARCH_X86)
-        ff_overlay_init_x86(s, s->format, inlink->format,
-                            s->alpha_format, s->main_has_alpha);
+#if ARCH_X86
+    ff_overlay_init_x86(s, s->format, inlink->format,
+                        s->alpha_format, s->main_has_alpha);
+#endif
 
     return 0;
 }
@@ -996,6 +883,7 @@ static int do_blend(FFFrameSync *fs)
     AVFrame *mainpic, *second;
     OverlayContext *s = ctx->priv;
     AVFilterLink *inlink = ctx->inputs[0];
+    FilterLink *inl = ff_filter_link(inlink);
     int ret;
 
     ret = ff_framesync_dualinput_get_writable(fs, &mainpic, &second);
@@ -1005,12 +893,18 @@ static int do_blend(FFFrameSync *fs)
         return ff_filter_frame(ctx->outputs[0], mainpic);
 
     if (s->eval_mode == EVAL_MODE_FRAME) {
-        int64_t pos = mainpic->pkt_pos;
 
-        s->var_values[VAR_N] = inlink->frame_count_out;
+        s->var_values[VAR_N] = inl->frame_count_out;
         s->var_values[VAR_T] = mainpic->pts == AV_NOPTS_VALUE ?
             NAN : mainpic->pts * av_q2d(inlink->time_base);
-        s->var_values[VAR_POS] = pos == -1 ? NAN : pos;
+#if FF_API_FRAME_PKT
+FF_DISABLE_DEPRECATION_WARNINGS
+        {
+            int64_t pos = mainpic->pkt_pos;
+            s->var_values[VAR_POS] = pos == -1 ? NAN : pos;
+        }
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
 
         s->var_values[VAR_OVERLAY_W] = s->var_values[VAR_OW] = second->width;
         s->var_values[VAR_OVERLAY_H] = s->var_values[VAR_OH] = second->height;
@@ -1018,8 +912,8 @@ static int do_blend(FFFrameSync *fs)
         s->var_values[VAR_MAIN_H   ] = s->var_values[VAR_MH] = mainpic->height;
 
         eval_expr(ctx);
-        av_log(ctx, AV_LOG_DEBUG, "n:%f t:%f pos:%f x:%f xi:%d y:%f yi:%d\n",
-               s->var_values[VAR_N], s->var_values[VAR_T], s->var_values[VAR_POS],
+        av_log(ctx, AV_LOG_DEBUG, "n:%f t:%f x:%f xi:%d y:%f yi:%d\n",
+               s->var_values[VAR_N], s->var_values[VAR_T],
                s->var_values[VAR_X], s->x,
                s->var_values[VAR_Y], s->y);
     }
@@ -1052,31 +946,33 @@ static int activate(AVFilterContext *ctx)
 
 #define OFFSET(x) offsetof(OverlayContext, x)
 #define FLAGS AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_FILTERING_PARAM
+#define TFLAGS AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
 static const AVOption overlay_options[] = {
-    { "x", "set the x expression", OFFSET(x_expr), AV_OPT_TYPE_STRING, {.str = "0"}, 0, 0, FLAGS },
-    { "y", "set the y expression", OFFSET(y_expr), AV_OPT_TYPE_STRING, {.str = "0"}, 0, 0, FLAGS },
+    { "x", "set the x expression", OFFSET(x_expr), AV_OPT_TYPE_STRING, {.str = "0"}, 0, 0, TFLAGS },
+    { "y", "set the y expression", OFFSET(y_expr), AV_OPT_TYPE_STRING, {.str = "0"}, 0, 0, TFLAGS },
     { "eof_action", "Action to take when encountering EOF from secondary input ",
         OFFSET(fs.opt_eof_action), AV_OPT_TYPE_INT, { .i64 = EOF_ACTION_REPEAT },
-        EOF_ACTION_REPEAT, EOF_ACTION_PASS, .flags = FLAGS, "eof_action" },
-        { "repeat", "Repeat the previous frame.",   0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_REPEAT }, .flags = FLAGS, "eof_action" },
-        { "endall", "End both streams.",            0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_ENDALL }, .flags = FLAGS, "eof_action" },
-        { "pass",   "Pass through the main input.", 0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_PASS },   .flags = FLAGS, "eof_action" },
-    { "eval", "specify when to evaluate expressions", OFFSET(eval_mode), AV_OPT_TYPE_INT, {.i64 = EVAL_MODE_FRAME}, 0, EVAL_MODE_NB-1, FLAGS, "eval" },
+        EOF_ACTION_REPEAT, EOF_ACTION_PASS, .flags = FLAGS, .unit = "eof_action" },
+        { "repeat", "Repeat the previous frame.",   0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_REPEAT }, .flags = FLAGS, .unit = "eof_action" },
+        { "endall", "End both streams.",            0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_ENDALL }, .flags = FLAGS, .unit = "eof_action" },
+        { "pass",   "Pass through the main input.", 0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_PASS },   .flags = FLAGS, .unit = "eof_action" },
+    { "eval", "specify when to evaluate expressions", OFFSET(eval_mode), AV_OPT_TYPE_INT, {.i64 = EVAL_MODE_FRAME}, 0, EVAL_MODE_NB-1, FLAGS, .unit = "eval" },
          { "init",  "eval expressions once during initialization", 0, AV_OPT_TYPE_CONST, {.i64=EVAL_MODE_INIT},  .flags = FLAGS, .unit = "eval" },
          { "frame", "eval expressions per-frame",                  0, AV_OPT_TYPE_CONST, {.i64=EVAL_MODE_FRAME}, .flags = FLAGS, .unit = "eval" },
     { "shortest", "force termination when the shortest input terminates", OFFSET(fs.opt_shortest), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
-    { "format", "set output format", OFFSET(format), AV_OPT_TYPE_INT, {.i64=OVERLAY_FORMAT_YUV420}, 0, OVERLAY_FORMAT_NB-1, FLAGS, "format" },
+    { "format", "set output format", OFFSET(format), AV_OPT_TYPE_INT, {.i64=OVERLAY_FORMAT_YUV420}, 0, OVERLAY_FORMAT_NB-1, FLAGS, .unit = "format" },
         { "yuv420", "", 0, AV_OPT_TYPE_CONST, {.i64=OVERLAY_FORMAT_YUV420}, .flags = FLAGS, .unit = "format" },
         { "yuv420p10", "", 0, AV_OPT_TYPE_CONST, {.i64=OVERLAY_FORMAT_YUV420P10}, .flags = FLAGS, .unit = "format" },
         { "yuv422", "", 0, AV_OPT_TYPE_CONST, {.i64=OVERLAY_FORMAT_YUV422}, .flags = FLAGS, .unit = "format" },
         { "yuv422p10", "", 0, AV_OPT_TYPE_CONST, {.i64=OVERLAY_FORMAT_YUV422P10}, .flags = FLAGS, .unit = "format" },
         { "yuv444", "", 0, AV_OPT_TYPE_CONST, {.i64=OVERLAY_FORMAT_YUV444}, .flags = FLAGS, .unit = "format" },
+        { "yuv444p10", "", 0, AV_OPT_TYPE_CONST, {.i64=OVERLAY_FORMAT_YUV444P10}, .flags = FLAGS, .unit = "format" },
         { "rgb",    "", 0, AV_OPT_TYPE_CONST, {.i64=OVERLAY_FORMAT_RGB},    .flags = FLAGS, .unit = "format" },
         { "gbrp",   "", 0, AV_OPT_TYPE_CONST, {.i64=OVERLAY_FORMAT_GBRP},   .flags = FLAGS, .unit = "format" },
         { "auto",   "", 0, AV_OPT_TYPE_CONST, {.i64=OVERLAY_FORMAT_AUTO},   .flags = FLAGS, .unit = "format" },
     { "repeatlast", "repeat overlay of the last overlay frame", OFFSET(fs.opt_repeatlast), AV_OPT_TYPE_BOOL, {.i64=1}, 0, 1, FLAGS },
-    { "alpha", "alpha format", OFFSET(alpha_format), AV_OPT_TYPE_INT, {.i64=0}, 0, 1, FLAGS, "alpha_format" },
+    { "alpha", "alpha format", OFFSET(alpha_format), AV_OPT_TYPE_INT, {.i64=0}, 0, 1, FLAGS, .unit = "alpha_format" },
         { "straight",      "", 0, AV_OPT_TYPE_CONST, {.i64=0}, .flags = FLAGS, .unit = "alpha_format" },
         { "premultiplied", "", 0, AV_OPT_TYPE_CONST, {.i64=1}, .flags = FLAGS, .unit = "alpha_format" },
     { NULL }
@@ -1117,7 +1013,7 @@ const AVFilter ff_vf_overlay = {
     .process_command = process_command,
     FILTER_INPUTS(avfilter_vf_overlay_inputs),
     FILTER_OUTPUTS(avfilter_vf_overlay_outputs),
-    FILTER_QUERY_FUNC(query_formats),
+    FILTER_QUERY_FUNC2(query_formats),
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL |
                      AVFILTER_FLAG_SLICE_THREADS,
 };

@@ -26,8 +26,11 @@
 
 #include <stdint.h>
 
+#include "libavutil/error.h"
+#include "libavutil/log.h"
+#include "libavutil/macros.h"
+#include "libavutil/mem.h"
 #include "libavutil/qsort.h"
-#include "libavutil/common.h"
 
 #include "huffman.h"
 #include "vlc.h"
@@ -145,7 +148,7 @@ static int build_huff_tree(VLC *vlc, Node *nodes, int head, int flags, int nb_bi
 
     get_tree_codes(bits, lens, xlat, nodes, head, 0, 0,
                    &pos, no_zero_count);
-    return ff_init_vlc_sparse(vlc, nb_bits, pos, lens, 2, 2, bits, 4, 4, xlat, 1, 1, 0);
+    return ff_vlc_init_sparse(vlc, nb_bits, pos, lens, 2, 2, bits, 4, 4, xlat, 1, 1, 0);
 }
 
 

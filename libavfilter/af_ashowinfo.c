@@ -24,14 +24,11 @@
  */
 
 #include <inttypes.h>
-#include <stddef.h>
 
 #include "libavutil/adler32.h"
 #include "libavutil/attributes.h"
 #include "libavutil/channel_layout.h"
-#include "libavutil/common.h"
 #include "libavutil/downmix_info.h"
-#include "libavutil/intreadwrite.h"
 #include "libavutil/mem.h"
 #include "libavutil/replaygain.h"
 #include "libavutil/timestamp.h"
@@ -41,7 +38,7 @@
 
 #include "audio.h"
 #include "avfilter.h"
-#include "internal.h"
+#include "filters.h"
 
 typedef struct AShowInfoContext {
     /**
@@ -123,7 +120,7 @@ static void print_peak(AVFilterContext *ctx, const char *str, uint32_t peak)
     if (!peak)
         av_log(ctx, AV_LOG_INFO, "unknown");
     else
-        av_log(ctx, AV_LOG_INFO, "%f", (float)peak / UINT32_MAX);
+        av_log(ctx, AV_LOG_INFO, "%f", peak / 100000.0f);
     av_log(ctx, AV_LOG_INFO, ", ");
 }
 
@@ -176,11 +173,12 @@ static void dump_unknown(AVFilterContext *ctx, AVFrameSideData *sd)
 
 static int filter_frame(AVFilterLink *inlink, AVFrame *buf)
 {
+    FilterLink      *inl = ff_filter_link(inlink);
     AVFilterContext *ctx = inlink->dst;
     AShowInfoContext *s  = ctx->priv;
     char chlayout_str[128];
     uint32_t checksum = 0;
-    int channels    = inlink->channels;
+    int channels    = inlink->ch_layout.nb_channels;
     int planar      = av_sample_fmt_is_planar(buf->format);
     int block_align = av_get_bytes_per_sample(buf->format) * (planar ? 1 : channels);
     int data_size   = buf->nb_samples * block_align;
@@ -200,17 +198,15 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *buf)
                        s->plane_checksums[0];
     }
 
-    av_get_channel_layout_string(chlayout_str, sizeof(chlayout_str), buf->channels,
-                                 buf->channel_layout);
+    av_channel_layout_describe(&buf->ch_layout, chlayout_str, sizeof(chlayout_str));
 
     av_log(ctx, AV_LOG_INFO,
-           "n:%"PRId64" pts:%s pts_time:%s pos:%"PRId64" "
+           "n:%"PRId64" pts:%s pts_time:%s "
            "fmt:%s channels:%d chlayout:%s rate:%d nb_samples:%d "
            "checksum:%08"PRIX32" ",
-           inlink->frame_count_out,
+           inl->frame_count_out,
            av_ts2str(buf->pts), av_ts2timestr(buf->pts, &inlink->time_base),
-           buf->pkt_pos,
-           av_get_sample_fmt_name(buf->format), buf->channels, chlayout_str,
+           av_get_sample_fmt_name(buf->format), buf->ch_layout.nb_channels, chlayout_str,
            buf->sample_rate, buf->nb_samples,
            checksum);
 
@@ -245,13 +241,6 @@ static const AVFilterPad inputs[] = {
     },
 };
 
-static const AVFilterPad outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_AUDIO,
-    },
-};
-
 const AVFilter ff_af_ashowinfo = {
     .name        = "ashowinfo",
     .description = NULL_IF_CONFIG_SMALL("Show textual information for each audio frame."),
@@ -259,5 +248,5 @@ const AVFilter ff_af_ashowinfo = {
     .uninit      = uninit,
     .flags       = AVFILTER_FLAG_METADATA_ONLY,
     FILTER_INPUTS(inputs),
-    FILTER_OUTPUTS(outputs),
+    FILTER_OUTPUTS(ff_audio_default_filterpad),
 };

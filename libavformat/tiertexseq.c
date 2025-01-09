@@ -25,7 +25,9 @@
  */
 
 #include "libavutil/channel_layout.h"
+#include "libavutil/mem.h"
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 
 #define SEQ_FRAME_SIZE         6144
@@ -242,12 +244,11 @@ static int seq_read_header(AVFormatContext *s)
     st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
     st->codecpar->codec_id = AV_CODEC_ID_PCM_S16BE;
     st->codecpar->codec_tag = 0;  /* no tag */
-    st->codecpar->channels = 1;
-    st->codecpar->channel_layout = AV_CH_LAYOUT_MONO;
+    st->codecpar->ch_layout = (AVChannelLayout)AV_CHANNEL_LAYOUT_MONO;
     st->codecpar->sample_rate = SEQ_SAMPLE_RATE;
     st->codecpar->bits_per_coded_sample = 16;
-    st->codecpar->bit_rate = st->codecpar->sample_rate * st->codecpar->bits_per_coded_sample * st->codecpar->channels;
-    st->codecpar->block_align = st->codecpar->channels * st->codecpar->bits_per_coded_sample / 8;
+    st->codecpar->bit_rate = st->codecpar->sample_rate * st->codecpar->bits_per_coded_sample * st->codecpar->ch_layout.nb_channels;
+    st->codecpar->block_align = st->codecpar->ch_layout.nb_channels * st->codecpar->bits_per_coded_sample / 8;
 
     return 0;
 }
@@ -308,11 +309,11 @@ static int seq_read_packet(AVFormatContext *s, AVPacket *pkt)
     return 0;
 }
 
-const AVInputFormat ff_tiertexseq_demuxer = {
-    .name           = "tiertexseq",
-    .long_name      = NULL_IF_CONFIG_SMALL("Tiertex Limited SEQ"),
+const FFInputFormat ff_tiertexseq_demuxer = {
+    .p.name         = "tiertexseq",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Tiertex Limited SEQ"),
     .priv_data_size = sizeof(SeqDemuxContext),
-    .flags_internal = FF_FMT_INIT_CLEANUP,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .read_probe     = seq_probe,
     .read_header    = seq_read_header,
     .read_packet    = seq_read_packet,

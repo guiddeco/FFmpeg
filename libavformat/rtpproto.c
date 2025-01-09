@@ -24,18 +24,17 @@
  * RTP protocol
  */
 
+#include "libavutil/mem.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/avstring.h"
 #include "libavutil/opt.h"
 #include "avformat.h"
-#include "avio_internal.h"
 #include "rtp.h"
 #include "rtpproto.h"
 #include "url.h"
 #include "ip.h"
 
 #include <stdarg.h>
-#include "internal.h"
 #include "network.h"
 #include "os_support.h"
 #include <fcntl.h>
@@ -68,7 +67,7 @@ typedef struct RTPContext {
 #define D AV_OPT_FLAG_DECODING_PARAM
 #define E AV_OPT_FLAG_ENCODING_PARAM
 static const AVOption options[] = {
-    { "ttl",                "Time to live (in milliseconds, multicast only)",                   OFFSET(ttl),             AV_OPT_TYPE_INT,    { .i64 = -1 },    -1, INT_MAX, .flags = D|E },
+    { "ttl",                "Time to live (multicast only)",                                    OFFSET(ttl),             AV_OPT_TYPE_INT,    { .i64 = -1 },    -1, 255,     .flags = D|E },
     { "buffer_size",        "Send/Receive buffer size (in bytes)",                              OFFSET(buffer_size),     AV_OPT_TYPE_INT,    { .i64 = -1 },    -1, INT_MAX, .flags = D|E },
     { "rtcp_port",          "Custom rtcp port",                                                 OFFSET(rtcp_port),       AV_OPT_TYPE_INT,    { .i64 = -1 },    -1, INT_MAX, .flags = D|E },
     { "local_rtpport",      "Local rtp port",                                                   OFFSET(local_rtpport),   AV_OPT_TYPE_INT,    { .i64 = -1 },    -1, INT_MAX, .flags = D|E },
@@ -380,6 +379,7 @@ static int rtp_open(URLContext *h, const char *uri, int flags)
     return 0;
 
  fail:
+    ff_ip_reset_filters(&s->filters);
     ffurl_closep(&s->rtp_hd);
     ffurl_closep(&s->rtcp_hd);
     ffurl_closep(&s->fec_hd);
