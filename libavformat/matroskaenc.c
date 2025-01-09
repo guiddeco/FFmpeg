@@ -2754,6 +2754,7 @@ static int mkv_reformat_av1(MatroskaMuxContext *mkv, AVIOContext *pb,
     *size = ret;
     return 0;
 }
+#endif
 
 static int webm_reformat_vtt(MatroskaMuxContext *mkv, AVIOContext *pb,
                              const AVPacket *pkt, int *size)

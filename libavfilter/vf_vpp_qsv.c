@@ -554,6 +554,11 @@ static int config_output(AVFilterLink *outlink)
         return AVERROR(EINVAL);
     }
 
+    if (get_mfx_version(ctx, &mfx_version) != MFX_ERR_NONE) {
+        av_log(ctx, AV_LOG_ERROR, "Failed to query mfx version.\n");
+        return AVERROR(EINVAL);
+    }
+
     if (inlink->format == AV_PIX_FMT_QSV) {
          if (!inl->hw_frames_ctx || !inl->hw_frames_ctx->data)
              return AVERROR(EINVAL);
@@ -702,6 +707,7 @@ static int config_output(AVFilterLink *outlink)
             av_log(ctx, AV_LOG_WARNING, "The QSV VPP Scale & format conversion "
                    "option is not supported with this MSDK version.\n");
     }
+#endif
 
 #undef INIT_MFX_EXTBUF
 #undef SET_MFX_PARAM_FIELD
