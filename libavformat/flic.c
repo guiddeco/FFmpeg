@@ -34,6 +34,7 @@
 #include "libavutil/channel_layout.h"
 #include "libavutil/intreadwrite.h"
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 
 #define FLIC_FILE_MAGIC_1 0xAF11
@@ -157,10 +158,9 @@ static int flic_read_header(AVFormatContext *s)
         ast->codecpar->codec_id = AV_CODEC_ID_PCM_U8;
         ast->codecpar->codec_tag = 0;
         ast->codecpar->sample_rate = FLIC_TFTD_SAMPLE_RATE;
-        ast->codecpar->channels = 1;
         ast->codecpar->bit_rate = st->codecpar->sample_rate * 8;
         ast->codecpar->bits_per_coded_sample = 8;
-        ast->codecpar->channel_layout = AV_CH_LAYOUT_MONO;
+        ast->codecpar->ch_layout = (AVChannelLayout)AV_CHANNEL_LAYOUT_MONO;
         ast->codecpar->extradata_size = 0;
 
         /* Since the header information is incorrect we have to figure out the
@@ -286,9 +286,9 @@ static int flic_read_seek(AVFormatContext *s, int stream_index,
     return 0;
 }
 
-const AVInputFormat ff_flic_demuxer = {
-    .name           = "flic",
-    .long_name      = NULL_IF_CONFIG_SMALL("FLI/FLC/FLX animation"),
+const FFInputFormat ff_flic_demuxer = {
+    .p.name         = "flic",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("FLI/FLC/FLX animation"),
     .priv_data_size = sizeof(FlicDemuxContext),
     .read_probe     = flic_probe,
     .read_header    = flic_read_header,

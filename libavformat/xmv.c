@@ -28,8 +28,10 @@
 #include <inttypes.h>
 
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 #include "riff.h"
 #include "libavutil/avassert.h"
@@ -219,6 +221,8 @@ static int xmv_read_header(AVFormatContext *s)
     /* Initialize the packet context */
 
     xmv->next_packet_offset = avio_tell(pb);
+    if (this_packet_size < xmv->next_packet_offset)
+        return AVERROR_INVALIDDATA;
     xmv->next_packet_size   = this_packet_size - xmv->next_packet_offset;
     xmv->stream_count       = xmv->audio_track_count + 1;
 
@@ -332,7 +336,7 @@ static int xmv_process_packet_header(AVFormatContext *s)
             ast->codecpar->codec_type            = AVMEDIA_TYPE_AUDIO;
             ast->codecpar->codec_id              = packet->codec_id;
             ast->codecpar->codec_tag             = packet->compression;
-            ast->codecpar->channels              = packet->channels;
+            ast->codecpar->ch_layout.nb_channels = packet->channels;
             ast->codecpar->sample_rate           = packet->sample_rate;
             ast->codecpar->bits_per_coded_sample = packet->bits_per_sample;
             ast->codecpar->bit_rate              = packet->bit_rate;
@@ -575,12 +579,12 @@ static int xmv_read_packet(AVFormatContext *s,
     return 0;
 }
 
-const AVInputFormat ff_xmv_demuxer = {
-    .name           = "xmv",
-    .long_name      = NULL_IF_CONFIG_SMALL("Microsoft XMV"),
-    .extensions     = "xmv",
+const FFInputFormat ff_xmv_demuxer = {
+    .p.name         = "xmv",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Microsoft XMV"),
+    .p.extensions   = "xmv",
     .priv_data_size = sizeof(XMVDemuxContext),
-    .flags_internal = FF_FMT_INIT_CLEANUP,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .read_probe     = xmv_probe,
     .read_header    = xmv_read_header,
     .read_packet    = xmv_read_packet,

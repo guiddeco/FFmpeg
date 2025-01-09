@@ -23,6 +23,7 @@
 #include "libavutil/dict.h"
 #include "libavutil/mathematics.h"
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 
 typedef struct R3DContext {
@@ -286,7 +287,7 @@ static int r3d_read_reda(AVFormatContext *s, AVPacket *pkt, Atom *atom)
             return AVERROR(ENOMEM);
         st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
         st->codecpar->codec_id = AV_CODEC_ID_PCM_S32BE;
-        st->codecpar->channels = r3d->audio_channels;
+        st->codecpar->ch_layout.nb_channels = r3d->audio_channels;
         avpriv_set_pts_info(st, 32, 1, s->streams[0]->time_base.den);
     } else {
         st = s->streams[1];
@@ -401,9 +402,9 @@ static int r3d_seek(AVFormatContext *s, int stream_index, int64_t sample_time, i
     return 0;
 }
 
-const AVInputFormat ff_r3d_demuxer = {
-    .name           = "r3d",
-    .long_name      = NULL_IF_CONFIG_SMALL("REDCODE R3D"),
+const FFInputFormat ff_r3d_demuxer = {
+    .p.name         = "r3d",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("REDCODE R3D"),
     .priv_data_size = sizeof(R3DContext),
     .read_probe     = r3d_probe,
     .read_header    = r3d_read_header,

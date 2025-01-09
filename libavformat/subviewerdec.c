@@ -25,10 +25,10 @@
  */
 
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 #include "subtitles.h"
 #include "avio_internal.h"
-#include "libavcodec/internal.h"
 #include "libavutil/avstring.h"
 #include "libavutil/bprint.h"
 #include "libavutil/intreadwrite.h"
@@ -186,14 +186,14 @@ end:
     return res;
 }
 
-const AVInputFormat ff_subviewer_demuxer = {
-    .name           = "subviewer",
-    .long_name      = NULL_IF_CONFIG_SMALL("SubViewer subtitle format"),
+const FFInputFormat ff_subviewer_demuxer = {
+    .p.name         = "subviewer",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("SubViewer subtitle format"),
+    .p.extensions   = "sub",
     .priv_data_size = sizeof(SubViewerContext),
-    .flags_internal = FF_FMT_INIT_CLEANUP,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .read_probe     = subviewer_probe,
     .read_header    = subviewer_read_header,
-    .extensions     = "sub",
     .read_packet    = ff_subtitles_read_packet,
     .read_seek2     = ff_subtitles_read_seek,
     .read_close     = ff_subtitles_read_close,

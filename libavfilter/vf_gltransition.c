@@ -3,9 +3,18 @@
  *
  * @see https://gl-transitions.com/
  */
-
+#include "libavutil/emms.h"
+#include "libavutil/imgutils.h"
+#include "libavutil/common.h"
+#include "libavutil/mem.h"
+#include "libavutil/mem_internal.h"
 #include "libavutil/opt.h"
-#include "internal.h"
+#include "libavutil/pixdesc.h"
+#include "libavfilter/formats.h"
+#include "avfilter.h"
+#include "filters.h"
+#include "gradfun.h"
+#include "video.h"
 #include "framesync.h"
 
 #ifndef __APPLE__
@@ -527,6 +536,8 @@ static int config_output(AVFilterLink *outLink)
   GLTransitionContext *c = ctx->priv;
   AVFilterLink *fromLink = ctx->inputs[FROM];
   AVFilterLink *toLink = ctx->inputs[TO];
+  FilterLink     *outl = ff_filter_link(outLink);
+  FilterLink     *inl = ff_filter_link(fromLink);
   int ret;
 
   if (fromLink->format != toLink->format)
@@ -548,7 +559,7 @@ static int config_output(AVFilterLink *outLink)
   outLink->w = fromLink->w;
   outLink->h = fromLink->h;
   // outLink->time_base = fromLink->time_base;
-  outLink->frame_rate = fromLink->frame_rate;
+  outl->frame_rate = inl->frame_rate;
 
   if ((ret = ff_framesync_init_dualinput(&c->fs, ctx)) < 0)
   {

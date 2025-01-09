@@ -18,16 +18,19 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include "libavutil/avstring.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/pixdesc.h"
 
 #include "avfilter.h"
 #include "drawutils.h"
+#include "filters.h"
 #include "formats.h"
-#include "internal.h"
 #include "framesync.h"
 #include "video.h"
 
@@ -46,6 +49,8 @@ typedef struct StackContext {
     int is_vertical;
     int is_horizontal;
     int nb_planes;
+    int nb_grid_columns;
+    int nb_grid_rows;
     uint8_t fillcolor[4];
     char *fillcolor_str;
     int fillcolor_enable;
@@ -58,18 +63,22 @@ typedef struct StackContext {
     FFFrameSync fs;
 } StackContext;
 
-static int query_formats(AVFilterContext *ctx)
+static int query_formats(const AVFilterContext *ctx,
+                         AVFilterFormatsConfig **cfg_in,
+                         AVFilterFormatsConfig **cfg_out)
 {
-    StackContext *s = ctx->priv;
+    const StackContext *s = ctx->priv;
     int reject_flags = AV_PIX_FMT_FLAG_BITSTREAM |
                        AV_PIX_FMT_FLAG_HWACCEL   |
                        AV_PIX_FMT_FLAG_PAL;
 
     if (s->fillcolor_enable) {
-        return ff_set_common_formats(ctx, ff_draw_supported_pixel_formats(0));
+        return ff_set_common_formats2(ctx, cfg_in, cfg_out,
+                                      ff_draw_supported_pixel_formats(0));
     }
 
-    return ff_set_common_formats(ctx, ff_formats_pixdesc_filter(0, reject_flags));
+    return ff_set_common_formats2(ctx, cfg_in, cfg_out,
+                                  ff_formats_pixdesc_filter(0, reject_flags));
 }
 
 static av_cold int init(AVFilterContext *ctx)
@@ -83,6 +92,34 @@ static av_cold int init(AVFilterContext *ctx)
     if (!strcmp(ctx->filter->name, "hstack"))
         s->is_horizontal = 1;
 
+    if (!strcmp(ctx->filter->name, "xstack")) {
+        int is_grid;
+        if (strcmp(s->fillcolor_str, "none") &&
+            av_parse_color(s->fillcolor, s->fillcolor_str, -1, ctx) >= 0) {
+            s->fillcolor_enable = 1;
+        } else {
+            s->fillcolor_enable = 0;
+        }
+        is_grid = s->nb_grid_rows && s->nb_grid_columns;
+        if (s->layout && is_grid) {
+            av_log(ctx, AV_LOG_ERROR, "Both layout and grid were specified. Only one is allowed.\n");
+            return AVERROR(EINVAL);
+        }
+        if (!s->layout && !is_grid) {
+            if (s->nb_inputs == 2) {
+                s->nb_grid_rows = 1;
+                s->nb_grid_columns = 2;
+                is_grid = 1;
+            } else {
+                av_log(ctx, AV_LOG_ERROR, "No layout or grid specified.\n");
+                return AVERROR(EINVAL);
+            }
+        }
+
+        if (is_grid)
+            s->nb_inputs = s->nb_grid_rows * s->nb_grid_columns;
+    }
+
     s->frames = av_calloc(s->nb_inputs, sizeof(*s->frames));
     if (!s->frames)
         return AVERROR(ENOMEM);
@@ -90,25 +127,6 @@ static av_cold int init(AVFilterContext *ctx)
     s->items = av_calloc(s->nb_inputs, sizeof(*s->items));
     if (!s->items)
         return AVERROR(ENOMEM);
-
-    if (!strcmp(ctx->filter->name, "xstack")) {
-        if (strcmp(s->fillcolor_str, "none") &&
-            av_parse_color(s->fillcolor, s->fillcolor_str, -1, ctx) >= 0) {
-            s->fillcolor_enable = 1;
-        } else {
-            s->fillcolor_enable = 0;
-        }
-        if (!s->layout) {
-            if (s->nb_inputs == 2) {
-                s->layout = av_strdup("0_0|w0_0");
-                if (!s->layout)
-                    return AVERROR(ENOMEM);
-            } else {
-                av_log(ctx, AV_LOG_ERROR, "No layout specified.\n");
-                return AVERROR(EINVAL);
-            }
-        }
-    }
 
     for (i = 0; i < s->nb_inputs; i++) {
         AVFilterPad pad = { 0 };
@@ -182,7 +200,9 @@ static int config_output(AVFilterLink *outlink)
 {
     AVFilterContext *ctx = outlink->src;
     StackContext *s = ctx->priv;
-    AVRational frame_rate = ctx->inputs[0]->frame_rate;
+    FilterLink *il = ff_filter_link(ctx->inputs[0]);
+    FilterLink *ol = ff_filter_link(outlink);
+    AVRational frame_rate = il->frame_rate;
     AVRational sar = ctx->inputs[0]->sample_aspect_ratio;
     int height = ctx->inputs[0]->h;
     int width = ctx->inputs[0]->w;
@@ -242,6 +262,48 @@ static int config_output(AVFilterLink *outlink)
                 width += ctx->inputs[i]->w;
             }
         }
+    } else if (s->nb_grid_rows && s->nb_grid_columns) {
+        int inw = 0, inh = 0;
+        int k = 0;
+        int row_height;
+        height = 0;
+        width = 0;
+        for (i = 0; i < s->nb_grid_rows; i++, inh += row_height) {
+            row_height = ctx->inputs[i * s->nb_grid_columns]->h;
+            inw = 0;
+            for (int j = 0; j < s->nb_grid_columns; j++, k++) {
+                AVFilterLink *inlink = ctx->inputs[k];
+                StackItem *item = &s->items[k];
+
+                if (ctx->inputs[k]->h != row_height) {
+                    av_log(ctx, AV_LOG_ERROR, "Input %d height %d does not match current row's height %d.\n",
+                           k, ctx->inputs[k]->h, row_height);
+                    return AVERROR(EINVAL);
+                }
+
+                if ((ret = av_image_fill_linesizes(item->linesize, inlink->format, inlink->w)) < 0) {
+                    return ret;
+                }
+
+                item->height[1] = item->height[2] = AV_CEIL_RSHIFT(inlink->h, s->desc->log2_chroma_h);
+                item->height[0] = item->height[3] = inlink->h;
+
+                if ((ret = av_image_fill_linesizes(item->x, inlink->format, inw)) < 0) {
+                    return ret;
+                }
+
+                item->y[1] = item->y[2] = AV_CEIL_RSHIFT(inh, s->desc->log2_chroma_h);
+                item->y[0] = item->y[3] = inh;
+                inw += ctx->inputs[k]->w;
+            }
+            height += row_height;
+            if (!i)
+                width = inw;
+            if (i && width != inw) {
+                av_log(ctx, AV_LOG_ERROR, "Row %d width %d does not match previous row width %d.\n", i, inw, width);
+                return AVERROR(EINVAL);
+            }
+        }
     } else {
         char *arg, *p = s->layout, *saveptr = NULL;
         char *arg2, *p2, *saveptr2 = NULL;
@@ -249,7 +311,8 @@ static int config_output(AVFilterLink *outlink)
         int inw, inh, size;
 
         if (s->fillcolor_enable) {
-            ff_draw_init(&s->draw, ctx->inputs[0]->format, 0);
+            const AVFilterLink *inlink = ctx->inputs[0];
+            ff_draw_init2(&s->draw, inlink->format, inlink->colorspace, inlink->color_range, 0);
             ff_draw_color(&s->draw, &s->color, s->fillcolor);
         }
 
@@ -326,16 +389,16 @@ static int config_output(AVFilterLink *outlink)
 
     outlink->w          = width;
     outlink->h          = height;
-    outlink->frame_rate = frame_rate;
+    ol->frame_rate      = frame_rate;
     outlink->sample_aspect_ratio = sar;
 
     for (i = 1; i < s->nb_inputs; i++) {
-        AVFilterLink *inlink = ctx->inputs[i];
-        if (outlink->frame_rate.num != inlink->frame_rate.num ||
-            outlink->frame_rate.den != inlink->frame_rate.den) {
+        il = ff_filter_link(ctx->inputs[i]);
+        if (ol->frame_rate.num != il->frame_rate.num ||
+            ol->frame_rate.den != il->frame_rate.den) {
             av_log(ctx, AV_LOG_VERBOSE,
                     "Video inputs have different frame rates, output will be VFR\n");
-            outlink->frame_rate = av_make_q(1, 0);
+            ol->frame_rate = av_make_q(1, 0);
             break;
         }
     }
@@ -403,7 +466,7 @@ const AVFilter ff_vf_hstack = {
     .priv_class    = &stack_class,
     .priv_size     = sizeof(StackContext),
     FILTER_OUTPUTS(outputs),
-    FILTER_QUERY_FUNC(query_formats),
+    FILTER_QUERY_FUNC2(query_formats),
     .init          = init,
     .uninit        = uninit,
     .activate      = activate,
@@ -420,7 +483,7 @@ const AVFilter ff_vf_vstack = {
     .priv_class    = &stack_class,
     .priv_size     = sizeof(StackContext),
     FILTER_OUTPUTS(outputs),
-    FILTER_QUERY_FUNC(query_formats),
+    FILTER_QUERY_FUNC2(query_formats),
     .init          = init,
     .uninit        = uninit,
     .activate      = activate,
@@ -434,6 +497,7 @@ const AVFilter ff_vf_vstack = {
 static const AVOption xstack_options[] = {
     { "inputs", "set number of inputs", OFFSET(nb_inputs), AV_OPT_TYPE_INT, {.i64=2}, 2, INT_MAX, .flags = FLAGS },
     { "layout", "set custom layout", OFFSET(layout), AV_OPT_TYPE_STRING, {.str=NULL}, 0, 0, .flags = FLAGS },
+    { "grid", "set fixed size grid layout", OFFSET(nb_grid_columns), AV_OPT_TYPE_IMAGE_SIZE, {.str=NULL}, 0, 0, .flags = FLAGS },
     { "shortest", "force termination when the shortest input terminates", OFFSET(shortest), AV_OPT_TYPE_BOOL, {.i64=0}, 0, 1, .flags = FLAGS },
     { "fill",  "set the color for unused pixels", OFFSET(fillcolor_str), AV_OPT_TYPE_STRING, {.str = "none"}, .flags = FLAGS },
     { NULL },
@@ -447,7 +511,7 @@ const AVFilter ff_vf_xstack = {
     .priv_size     = sizeof(StackContext),
     .priv_class    = &xstack_class,
     FILTER_OUTPUTS(outputs),
-    FILTER_QUERY_FUNC(query_formats),
+    FILTER_QUERY_FUNC2(query_formats),
     .init          = init,
     .uninit        = uninit,
     .activate      = activate,

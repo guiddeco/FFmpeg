@@ -32,6 +32,7 @@
 #include "config.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/avassert.h"
+#include "libavutil/common.h"
 
 #if ARCH_X86_64
 // TODO: Benchmark and optionally enable on other 64-bit architectures.
@@ -281,7 +282,7 @@ static inline void put_sbits(PutBitContext *pb, int n, int32_t value)
 {
     av_assert2(n >= 0 && n <= 31);
 
-    put_bits(pb, n, av_mod_uintp2(value, n));
+    put_bits(pb, n, av_zero_extend(value, n));
 }
 
 /**
@@ -360,6 +361,13 @@ static inline void put_bits64(PutBitContext *s, int n, uint64_t value)
 #endif
 
     }
+}
+
+static inline void put_sbits63(PutBitContext *pb, int n, int64_t value)
+{
+    av_assert2(n >= 0 && n < 64);
+
+    put_bits64(pb, n, (uint64_t)(value) & (~(UINT64_MAX << n)));
 }
 
 /**

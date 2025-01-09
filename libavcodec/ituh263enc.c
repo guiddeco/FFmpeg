@@ -27,19 +27,24 @@
  * H.263 bitstream encoder.
  */
 
+#include "config_components.h"
+
 #include <limits.h>
 
 #include "libavutil/attributes.h"
 #include "libavutil/thread.h"
 #include "avcodec.h"
+#include "codec_internal.h"
 #include "mpegvideo.h"
 #include "mpegvideodata.h"
+#include "flvenc.h"
+#include "mpegvideoenc.h"
 #include "h263.h"
+#include "h263enc.h"
 #include "h263data.h"
+#include "h263dsp.h"
 #include "mathops.h"
 #include "mpegutils.h"
-#include "flv.h"
-#include "mpeg4video.h"
 #include "internal.h"
 
 /**
@@ -101,12 +106,13 @@ av_const int ff_h263_aspect_to_info(AVRational aspect){
     return FF_ASPECT_EXTENDED;
 }
 
-void ff_h263_encode_picture_header(MpegEncContext * s, int picture_number)
+void ff_h263_encode_picture_header(MpegEncContext * s)
 {
     int format, coded_frame_rate, coded_frame_rate_base, i, temp_ref;
     int best_clock_code=1;
     int best_divisor=60;
     int best_error= INT_MAX;
+    int custom_pcf;
 
     if(s->h263_plus){
         for(i=0; i<2; i++){
@@ -121,7 +127,7 @@ void ff_h263_encode_picture_header(MpegEncContext * s, int picture_number)
             }
         }
     }
-    s->custom_pcf= best_clock_code!=1 || best_divisor!=60;
+    custom_pcf = best_clock_code != 1 || best_divisor != 60;
     coded_frame_rate= 1800000;
     coded_frame_rate_base= (1000+best_clock_code)*best_divisor;
 
@@ -166,7 +172,7 @@ void ff_h263_encode_picture_header(MpegEncContext * s, int picture_number)
         else
             put_bits(&s->pb, 3, format);
 
-        put_bits(&s->pb,1, s->custom_pcf);
+        put_bits(&s->pb,1, custom_pcf);
         put_bits(&s->pb,1, s->umvplus); /* Unrestricted Motion Vector */
         put_bits(&s->pb,1,0); /* SAC: off */
         put_bits(&s->pb,1,s->obmc); /* Advanced Prediction Mode */
@@ -193,18 +199,18 @@ void ff_h263_encode_picture_header(MpegEncContext * s, int picture_number)
 
         if (format == 8) {
             /* Custom Picture Format (CPFMT) */
-            s->aspect_ratio_info= ff_h263_aspect_to_info(s->avctx->sample_aspect_ratio);
+            unsigned aspect_ratio_info = ff_h263_aspect_to_info(s->avctx->sample_aspect_ratio);
 
-            put_bits(&s->pb,4,s->aspect_ratio_info);
+            put_bits(&s->pb,4, aspect_ratio_info);
             put_bits(&s->pb,9,(s->width >> 2) - 1);
             put_bits(&s->pb,1,1); /* "1" to prevent start code emulation */
             put_bits(&s->pb,9,(s->height >> 2));
-            if (s->aspect_ratio_info == FF_ASPECT_EXTENDED){
+            if (aspect_ratio_info == FF_ASPECT_EXTENDED){
                 put_bits(&s->pb, 8, s->avctx->sample_aspect_ratio.num);
                 put_bits(&s->pb, 8, s->avctx->sample_aspect_ratio.den);
             }
         }
-        if(s->custom_pcf){
+        if (custom_pcf) {
             if(ufep){
                 put_bits(&s->pb, 1, best_clock_code);
                 put_bits(&s->pb, 7, best_divisor);
@@ -266,9 +272,7 @@ void ff_h263_encode_gob_header(MpegEncContext * s, int mb_line)
  */
 void ff_clean_h263_qscales(MpegEncContext *s){
     int i;
-    int8_t * const qscale_table = s->current_picture.qscale_table;
-
-    ff_init_qscale_tab(s);
+    int8_t * const qscale_table = s->cur_pic.qscale_table;
 
     for(i=1; i<s->mb_num; i++){
         if(qscale_table[ s->mb_index2xy[i] ] - qscale_table[ s->mb_index2xy[i-1] ] >2)
@@ -300,7 +304,7 @@ static const int dquant_code[5]= {1,0,9,2,3};
 static void h263_encode_block(MpegEncContext * s, int16_t * block, int n)
 {
     int level, run, last, i, j, last_index, last_non_zero, sign, slevel, code;
-    RLTable *rl;
+    const RLTable *rl;
 
     rl = &ff_h263_rl_inter;
     if (s->mb_intra && !s->h263_aic) {
@@ -445,6 +449,47 @@ static void h263p_encode_umotion(PutBitContext *pb, int val)
     }
 }
 
+static int h263_pred_dc(MpegEncContext * s, int n, int16_t **dc_val_ptr)
+{
+    int x, y, wrap, a, c, pred_dc;
+    int16_t *dc_val;
+
+    /* find prediction */
+    if (n < 4) {
+        x = 2 * s->mb_x + (n & 1);
+        y = 2 * s->mb_y + ((n & 2) >> 1);
+        wrap = s->b8_stride;
+        dc_val = s->dc_val[0];
+    } else {
+        x = s->mb_x;
+        y = s->mb_y;
+        wrap = s->mb_stride;
+        dc_val = s->dc_val[n - 4 + 1];
+    }
+    /* B C
+     * A X
+     */
+    a = dc_val[(x - 1) + (y) * wrap];
+    c = dc_val[(x) + (y - 1) * wrap];
+
+    /* No prediction outside GOB boundary */
+    if (s->first_slice_line && n != 3) {
+        if (n != 2) c = 1024;
+        if (n != 1 && s->mb_x == s->resync_mb_x) a = 1024;
+    }
+    /* just DC prediction */
+    if (a != 1024 && c != 1024)
+        pred_dc = (a + c) >> 1;
+    else if (a != 1024)
+        pred_dc = a;
+    else
+        pred_dc = c;
+
+    /* we assume pred is positive */
+    *dc_val_ptr = &dc_val[x + y * wrap];
+    return pred_dc;
+}
+
 void ff_h263_encode_mb(MpegEncContext * s,
                        int16_t block[6][64],
                        int motion_x, int motion_y)
@@ -466,7 +511,6 @@ void ff_h263_encode_mb(MpegEncContext * s,
                 s->misc_bits++;
                 s->last_bits++;
             }
-            s->skip_count++;
 
             return;
         }
@@ -520,8 +564,8 @@ void ff_h263_encode_mb(MpegEncContext * s,
                 /* motion vectors: 8x8 mode*/
                 ff_h263_pred_motion(s, i, 0, &pred_x, &pred_y);
 
-                motion_x = s->current_picture.motion_val[0][s->block_index[i]][0];
-                motion_y = s->current_picture.motion_val[0][s->block_index[i]][1];
+                motion_x = s->cur_pic.motion_val[0][s->block_index[i]][0];
+                motion_y = s->cur_pic.motion_val[0][s->block_index[i]][1];
                 if (!s->umvplus) {
                     ff_h263_encode_motion_vector(s, motion_x - pred_x,
                                                     motion_y - pred_y, 1);
@@ -552,7 +596,7 @@ void ff_h263_encode_mb(MpegEncContext * s,
                 if(i<4) scale= s->y_dc_scale;
                 else    scale= s->c_dc_scale;
 
-                pred_dc = ff_h263_pred_dc(s, i, &dc_ptr[i]);
+                pred_dc = h263_pred_dc(s, i, &dc_ptr[i]);
                 level -= pred_dc;
                 /* Quant */
                 if (level >= 0)
@@ -636,7 +680,6 @@ void ff_h263_encode_mb(MpegEncContext * s,
     if(interleaved_stats){
         if (!s->mb_intra) {
             s->p_tex_bits+= get_bits_diff(s);
-            s->f_count++;
         }else{
             s->i_tex_bits+= get_bits_diff(s);
             s->i_count++;
@@ -644,14 +687,30 @@ void ff_h263_encode_mb(MpegEncContext * s,
     }
 }
 
+void ff_h263_update_mb(MpegEncContext *s)
+{
+    const int mb_xy = s->mb_y * s->mb_stride + s->mb_x;
+
+    if (s->cur_pic.mbskip_table)
+        s->cur_pic.mbskip_table[mb_xy] = s->mb_skipped;
+
+    if (s->mv_type == MV_TYPE_8X8)
+        s->cur_pic.mb_type[mb_xy] = MB_TYPE_FORWARD_MV | MB_TYPE_8x8;
+    else if(s->mb_intra)
+        s->cur_pic.mb_type[mb_xy] = MB_TYPE_INTRA;
+    else
+        s->cur_pic.mb_type[mb_xy] = MB_TYPE_FORWARD_MV | MB_TYPE_16x16;
+
+    ff_h263_update_motion_val(s);
+}
+
 void ff_h263_encode_motion(PutBitContext *pb, int val, int f_code)
 {
     int range, bit_size, sign, code, bits;
 
     if (val == 0) {
-        /* zero vector */
-        code = 0;
-        put_bits(pb, ff_mvtab[code][1], ff_mvtab[code][0]);
+        /* zero vector -- corresponds to ff_mvtab[0] */
+        put_bits(pb, 1, 1);
     } else {
         bit_size = f_code - 1;
         range = 1 << bit_size;
@@ -681,7 +740,7 @@ static av_cold void init_mv_penalty_and_fcode(void)
         for(mv=-MAX_DMV; mv<=MAX_DMV; mv++){
             int len;
 
-            if(mv==0) len= ff_mvtab[0][1];
+            if (mv==0) len = 1; // ff_mvtab[0][1]
             else{
                 int val, bit_size, code;
 
@@ -695,7 +754,7 @@ static av_cold void init_mv_penalty_and_fcode(void)
                 if(code<33){
                     len= ff_mvtab[code][1] + 1 + bit_size;
                 }else{
-                    len= ff_mvtab[32][1] + av_log2(code>>5) + 2 + bit_size;
+                    len = 12 /* ff_mvtab[32][1] */ + av_log2(code>>5) + 2 + bit_size;
                 }
             }
 
@@ -820,6 +879,10 @@ av_cold void ff_h263_encode_init(MpegEncContext *s)
         s->c_dc_scale_table= ff_mpeg1_dc_scale_table;
     }
 
+#if CONFIG_H263_ENCODER // Snow and SVQ1 call this
+    ff_h263dsp_init(&s->h263dsp);
+#endif
+
     ff_thread_once(&init_static_once, h263_encode_init_static);
 }
 
@@ -833,3 +896,68 @@ void ff_h263_encode_mba(MpegEncContext *s)
     mb_pos= s->mb_x + s->mb_width*s->mb_y;
     put_bits(&s->pb, ff_mba_length[i], mb_pos);
 }
+
+#define OFFSET(x) offsetof(MpegEncContext, x)
+#define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
+static const AVOption h263_options[] = {
+    { "obmc",         "use overlapped block motion compensation.", OFFSET(obmc), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VE },
+    { "mb_info",      "emit macroblock info for RFC 2190 packetization, the parameter value is the maximum payload size", OFFSET(mb_info), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, VE },
+    FF_MPV_COMMON_OPTS
+    FF_MPV_COMMON_MOTION_EST_OPTS
+    { NULL },
+};
+
+static const AVClass h263_class = {
+    .class_name = "H.263 encoder",
+    .item_name  = av_default_item_name,
+    .option     = h263_options,
+    .version    = LIBAVUTIL_VERSION_INT,
+};
+
+const FFCodec ff_h263_encoder = {
+    .p.name         = "h263",
+    CODEC_LONG_NAME("H.263 / H.263-1996"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_H263,
+    .p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE},
+    .color_ranges   = AVCOL_RANGE_MPEG,
+    .p.priv_class   = &h263_class,
+    .p.capabilities = AV_CODEC_CAP_ENCODER_REORDERED_OPAQUE,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
+    .priv_data_size = sizeof(MpegEncContext),
+    .init           = ff_mpv_encode_init,
+    FF_CODEC_ENCODE_CB(ff_mpv_encode_picture),
+    .close          = ff_mpv_encode_end,
+};
+
+static const AVOption h263p_options[] = {
+    { "umv",        "Use unlimited motion vectors.",    OFFSET(umvplus),       AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VE },
+    { "aiv",        "Use alternative inter VLC.",       OFFSET(alt_inter_vlc), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VE },
+    { "obmc",       "use overlapped block motion compensation.", OFFSET(obmc), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VE },
+    { "structured_slices", "Write slice start position at every GOB header instead of just GOB number.", OFFSET(h263_slice_structured), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VE},
+    FF_MPV_COMMON_OPTS
+    FF_MPV_COMMON_MOTION_EST_OPTS
+    { NULL },
+};
+static const AVClass h263p_class = {
+    .class_name = "H.263p encoder",
+    .item_name  = av_default_item_name,
+    .option     = h263p_options,
+    .version    = LIBAVUTIL_VERSION_INT,
+};
+
+const FFCodec ff_h263p_encoder = {
+    .p.name         = "h263p",
+    CODEC_LONG_NAME("H.263+ / H.263-1998 / H.263 version 2"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_H263P,
+    .p.pix_fmts     = (const enum AVPixelFormat[]){ AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE },
+    .color_ranges   = AVCOL_RANGE_MPEG,
+    .p.priv_class   = &h263p_class,
+    .p.capabilities = AV_CODEC_CAP_SLICE_THREADS | AV_CODEC_CAP_ENCODER_REORDERED_OPAQUE,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
+    .priv_data_size = sizeof(MpegEncContext),
+    .init           = ff_mpv_encode_init,
+    FF_CODEC_ENCODE_CB(ff_mpv_encode_picture),
+    .close          = ff_mpv_encode_end,
+};
