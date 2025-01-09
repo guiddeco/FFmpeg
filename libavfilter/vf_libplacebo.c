@@ -869,15 +869,6 @@ static int output_frame(AVFilterContext *ctx, int64_t pts)
         changed |= AV_SIDE_DATA_PROP_COLOR_DEPENDENT;
     av_frame_side_data_remove_by_props(&out->side_data, &out->nb_side_data, changed);
 
-    /* Strip side data if no longer relevant */
-    if (changed_csp) {
-        av_frame_remove_side_data(out, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
-        av_frame_remove_side_data(out, AV_FRAME_DATA_CONTENT_LIGHT_LEVEL);
-    }
-    if (s->apply_dovi || changed_csp) {
-        av_frame_remove_side_data(out, AV_FRAME_DATA_DOVI_RPU_BUFFER);
-        av_frame_remove_side_data(out, AV_FRAME_DATA_DOVI_METADATA);
-    }
     if (s->apply_filmgrain)
         av_frame_remove_side_data(out, AV_FRAME_DATA_FILM_GRAIN_PARAMS);
 

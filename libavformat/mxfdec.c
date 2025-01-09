@@ -189,8 +189,6 @@ typedef struct {
     int body_sid;
     MXFWrappingScheme wrapping;
     int edit_units_per_packet; /* how many edit units to read at a time (PCM, ClipWrapped) */
-    int require_reordering;
-    int channel_ordering[FF_SANE_NB_CHANNELS];
 } MXFTrack;
 
 typedef struct MXFDescriptor {
