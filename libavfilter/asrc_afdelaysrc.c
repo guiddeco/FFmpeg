@@ -89,7 +89,7 @@ static int query_formats(const AVFilterContext *ctx,
     int sample_rates[] = { s->sample_rate, -1 };
     static const enum AVSampleFormat sample_fmts[] = { AV_SAMPLE_FMT_FLTP,
                                                        AV_SAMPLE_FMT_NONE };
-    int ret = ff_set_common_formats_from_list2(ctx, cfg_in, cfg_out, sample_fmts);
+    int ret = ff_set_sample_formats_from_list2(ctx, cfg_in, cfg_out, sample_fmts);
     if (ret < 0)
         return ret;
 
@@ -140,13 +140,12 @@ static const AVOption afdelaysrc_options[] = {
 
 AVFILTER_DEFINE_CLASS(afdelaysrc);
 
-const AVFilter ff_asrc_afdelaysrc = {
-    .name          = "afdelaysrc",
-    .description   = NULL_IF_CONFIG_SMALL("Generate a Fractional delay FIR coefficients."),
+const FFFilter ff_asrc_afdelaysrc = {
+    .p.name        = "afdelaysrc",
+    .p.description = NULL_IF_CONFIG_SMALL("Generate a Fractional delay FIR coefficients."),
+    .p.priv_class  = &afdelaysrc_class,
     .priv_size     = sizeof(AFDelaySrcContext),
-    .priv_class    = &afdelaysrc_class,
     .activate      = activate,
-    .inputs        = NULL,
     FILTER_OUTPUTS(afdelaysrc_outputs),
     FILTER_QUERY_FUNC2(query_formats),
 };

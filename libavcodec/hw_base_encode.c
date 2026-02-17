@@ -18,6 +18,7 @@
 
 #include "libavutil/avassert.h"
 #include "libavutil/common.h"
+#include "libavutil/error.h"
 #include "libavutil/internal.h"
 #include "libavutil/log.h"
 #include "libavutil/mem.h"
@@ -603,7 +604,7 @@ start:
                     av_fifo_can_read(ctx->encode_fifo);
                 err = ctx->op->issue(avctx, pic);
                 if (err < 0) {
-                    av_log(avctx, AV_LOG_ERROR, "Encode failed: %d.\n", err);
+                    av_log(avctx, AV_LOG_ERROR, "Encode failed: %s.\n", av_err2str(err));
                     return err;
                 }
                 pic->encode_issued = 1;
@@ -630,7 +631,7 @@ start:
 
         err = ctx->op->issue(avctx, pic);
         if (err < 0) {
-            av_log(avctx, AV_LOG_ERROR, "Encode failed: %d.\n", err);
+            av_log(avctx, AV_LOG_ERROR, "Encode failed: %s.\n", av_err2str(err));
             return err;
         }
 
@@ -664,6 +665,11 @@ int ff_hw_base_init_gop_structure(FFHWBaseEncodeContext *ctx, AVCodecContext *av
 {
     ctx->ref_l0 = FFMIN(ref_l0, MAX_PICTURE_REFERENCES);
     ctx->ref_l1 = FFMIN(ref_l1, MAX_PICTURE_REFERENCES);
+
+    if (avctx->refs > 0) {
+        ctx->ref_l0 = FFMIN(ctx->ref_l0, avctx->refs);
+        ctx->ref_l1 = FFMIN(ctx->ref_l1, avctx->refs);
+    }
 
     if (flags & FF_HW_FLAG_INTRA_ONLY || avctx->gop_size <= 1) {
         av_log(avctx, AV_LOG_VERBOSE, "Using intra frames only.\n");

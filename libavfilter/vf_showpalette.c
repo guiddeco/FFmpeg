@@ -47,12 +47,12 @@ static int query_formats(const AVFilterContext *ctx,
 {
     static const enum AVPixelFormat in_fmts[]  = {AV_PIX_FMT_PAL8,  AV_PIX_FMT_NONE};
     static const enum AVPixelFormat out_fmts[] = {AV_PIX_FMT_RGB32, AV_PIX_FMT_NONE};
-    int ret = ff_formats_ref(ff_make_format_list(in_fmts),
+    int ret = ff_formats_ref(ff_make_pixel_format_list(in_fmts),
                              &cfg_in[0]->formats);
     if (ret < 0)
         return ret;
 
-    return ff_formats_ref(ff_make_format_list(out_fmts),
+    return ff_formats_ref(ff_make_pixel_format_list(out_fmts),
                           &cfg_out[0]->formats);
 }
 
@@ -112,12 +112,12 @@ static const AVFilterPad showpalette_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_showpalette = {
-    .name          = "showpalette",
-    .description   = NULL_IF_CONFIG_SMALL("Display frame palette."),
+const FFFilter ff_vf_showpalette = {
+    .p.name        = "showpalette",
+    .p.description = NULL_IF_CONFIG_SMALL("Display frame palette."),
+    .p.priv_class  = &showpalette_class,
     .priv_size     = sizeof(ShowPaletteContext),
     FILTER_INPUTS(showpalette_inputs),
     FILTER_OUTPUTS(showpalette_outputs),
     FILTER_QUERY_FUNC2(query_formats),
-    .priv_class    = &showpalette_class,
 };

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024 Institue of Software Chinese Academy of Sciences (ISCAS).
+ * Copyright (c) 2024 Institute of Software Chinese Academy of Sciences (ISCAS).
  *
  * This file is part of FFmpeg.
  *
@@ -37,7 +37,7 @@ SADVSET\vlen\w:
         vsetvlstatic32    \w, \vlen
         vmv.v.i           v0, 0
         vmv.s.x           v24, zero
-        vsetvlstatic16    \w, \vlen
+        vsetvlstatic16    \w, \vlen, tu
 SAD\vlen\w:
         addi              a5, a5, -2
         vle16.v           v8, (a0)

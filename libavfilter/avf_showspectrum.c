@@ -368,12 +368,12 @@ static int query_formats(const AVFilterContext *ctx,
     int ret;
 
     /* set input audio formats */
-    formats = ff_make_format_list(sample_fmts);
+    formats = ff_make_sample_format_list(sample_fmts);
     if ((ret = ff_formats_ref(formats, &cfg_in[0]->formats)) < 0)
         return ret;
 
     /* set output video format */
-    formats = ff_make_format_list(pix_fmts);
+    formats = ff_make_pixel_format_list(pix_fmts);
     if ((ret = ff_formats_ref(formats, &cfg_out[0]->formats)) < 0)
         return ret;
 
@@ -492,7 +492,7 @@ static void drawtext(AVFrame *pic, int x, int y, const char *txt, int o)
     const uint8_t *font;
     int font_height;
 
-    font = avpriv_cga_font,   font_height =  8;
+    font = avpriv_cga_font_get(),   font_height =  8;
 
     for (int i = 0; txt[i]; i++) {
         int char_y, mask;
@@ -1680,17 +1680,17 @@ static const AVFilterPad showspectrum_outputs[] = {
     },
 };
 
-const AVFilter ff_avf_showspectrum = {
-    .name          = "showspectrum",
-    .description   = NULL_IF_CONFIG_SMALL("Convert input audio to a spectrum video output."),
+const FFFilter ff_avf_showspectrum = {
+    .p.name        = "showspectrum",
+    .p.description = NULL_IF_CONFIG_SMALL("Convert input audio to a spectrum video output."),
+    .p.priv_class  = &showspectrum_class,
+    .p.flags       = AVFILTER_FLAG_SLICE_THREADS,
     .uninit        = uninit,
     .priv_size     = sizeof(ShowSpectrumContext),
     FILTER_INPUTS(ff_audio_default_filterpad),
     FILTER_OUTPUTS(showspectrum_outputs),
     FILTER_QUERY_FUNC2(query_formats),
     .activate      = activate,
-    .priv_class    = &showspectrum_class,
-    .flags         = AVFILTER_FLAG_SLICE_THREADS,
 };
 #endif // CONFIG_SHOWSPECTRUM_FILTER
 
@@ -1867,16 +1867,16 @@ static const AVFilterPad showspectrumpic_outputs[] = {
     },
 };
 
-const AVFilter ff_avf_showspectrumpic = {
-    .name          = "showspectrumpic",
-    .description   = NULL_IF_CONFIG_SMALL("Convert input audio to a spectrum video output single picture."),
+const FFFilter ff_avf_showspectrumpic = {
+    .p.name        = "showspectrumpic",
+    .p.description = NULL_IF_CONFIG_SMALL("Convert input audio to a spectrum video output single picture."),
+    .p.priv_class  = &showspectrumpic_class,
+    .p.flags       = AVFILTER_FLAG_SLICE_THREADS,
     .uninit        = uninit,
     .priv_size     = sizeof(ShowSpectrumContext),
     FILTER_INPUTS(showspectrumpic_inputs),
     FILTER_OUTPUTS(showspectrumpic_outputs),
     FILTER_QUERY_FUNC2(query_formats),
-    .priv_class    = &showspectrumpic_class,
-    .flags         = AVFILTER_FLAG_SLICE_THREADS,
 };
 
 #endif // CONFIG_SHOWSPECTRUMPIC_FILTER

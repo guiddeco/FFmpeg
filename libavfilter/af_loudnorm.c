@@ -740,7 +740,7 @@ static int query_formats(const AVFilterContext *ctx,
     };
     int ret;
 
-    ret = ff_set_common_formats_from_list2(ctx, cfg_in, cfg_out, sample_fmts);
+    ret = ff_set_sample_formats_from_list2(ctx, cfg_in, cfg_out, sample_fmts);
     if (ret < 0)
         return ret;
 
@@ -774,7 +774,7 @@ static int config_input(AVFilterLink *inlink)
         return AVERROR(ENOMEM);
 
     s->limiter_buf_size = frame_size(inlink->sample_rate, 210) * inlink->ch_layout.nb_channels;
-    s->limiter_buf = av_malloc_array(s->buf_size, sizeof(*s->limiter_buf));
+    s->limiter_buf = av_malloc_array(s->limiter_buf_size, sizeof(*s->limiter_buf));
     if (!s->limiter_buf)
         return AVERROR(ENOMEM);
 
@@ -926,11 +926,11 @@ static const AVFilterPad avfilter_af_loudnorm_inputs[] = {
     },
 };
 
-const AVFilter ff_af_loudnorm = {
-    .name          = "loudnorm",
-    .description   = NULL_IF_CONFIG_SMALL("EBU R128 loudness normalization"),
+const FFFilter ff_af_loudnorm = {
+    .p.name        = "loudnorm",
+    .p.description = NULL_IF_CONFIG_SMALL("EBU R128 loudness normalization"),
+    .p.priv_class  = &loudnorm_class,
     .priv_size     = sizeof(LoudNormContext),
-    .priv_class    = &loudnorm_class,
     .init          = init,
     .activate      = activate,
     .uninit        = uninit,

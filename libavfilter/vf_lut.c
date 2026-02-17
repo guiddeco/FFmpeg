@@ -154,7 +154,7 @@ static int query_formats(const AVFilterContext *ctx,
     const enum AVPixelFormat *pix_fmts = s->is_rgb ? rgb_pix_fmts :
                                                      s->is_yuv ? yuv_pix_fmts :
                                                                  all_pix_fmts;
-    return ff_set_common_formats_from_list2(ctx, cfg_in, cfg_out, pix_fmts);
+    return ff_set_pixel_formats_from_list2(ctx, cfg_in, cfg_out, pix_fmts);
 }
 
 /**
@@ -285,8 +285,8 @@ static int config_props(AVFilterLink *inlink)
 
     s->is_yuv = s->is_rgb = 0;
     s->is_planar = desc->flags & AV_PIX_FMT_FLAG_PLANAR;
-    if      (ff_fmt_is_in(inlink->format, yuv_pix_fmts)) s->is_yuv = 1;
-    else if (ff_fmt_is_in(inlink->format, rgb_pix_fmts)) s->is_rgb = 1;
+    if      (ff_pixfmt_is_in(inlink->format, yuv_pix_fmts)) s->is_yuv = 1;
+    else if (ff_pixfmt_is_in(inlink->format, rgb_pix_fmts)) s->is_rgb = 1;
 
     if (s->is_rgb) {
         ff_fill_rgba_map(rgba_map, inlink->format);
@@ -590,18 +590,18 @@ static const AVFilterPad inputs[] = {
 };
 
 #define DEFINE_LUT_FILTER(name_, description_, priv_class_)             \
-    const AVFilter ff_vf_##name_ = {                                    \
-        .name          = #name_,                                        \
-        .description   = NULL_IF_CONFIG_SMALL(description_),            \
-        .priv_class    = &priv_class_ ## _class,                        \
+    const FFFilter ff_vf_##name_ = {                                    \
+        .p.name        = #name_,                                        \
+        .p.description = NULL_IF_CONFIG_SMALL(description_),            \
+        .p.priv_class  = &priv_class_ ## _class,                        \
+        .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC |       \
+                         AVFILTER_FLAG_SLICE_THREADS,                   \
         .priv_size     = sizeof(LutContext),                            \
         .init          = name_##_init,                                  \
         .uninit        = uninit,                                        \
         FILTER_INPUTS(inputs),                                          \
         FILTER_OUTPUTS(ff_video_default_filterpad),                     \
         FILTER_QUERY_FUNC2(query_formats),                              \
-        .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC |       \
-                         AVFILTER_FLAG_SLICE_THREADS,                   \
         .process_command = process_command,                             \
     }
 

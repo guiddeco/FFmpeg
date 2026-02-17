@@ -148,7 +148,7 @@ static int query_formats(const AVFilterContext *ctx,
 {
     enum AVPixelFormat pix_fmts[] = { AV_PIX_FMT_GRAY8, AV_PIX_FMT_NONE };
 
-    return ff_set_common_formats_from_list2(ctx, cfg_in, cfg_out, pix_fmts);
+    return ff_set_pixel_formats_from_list2(ctx, cfg_in, cfg_out, pix_fmts);
 }
 
 static const AVFilterPad perlin_outputs[] = {
@@ -160,13 +160,13 @@ static const AVFilterPad perlin_outputs[] = {
     },
 };
 
-const AVFilter ff_vsrc_perlin = {
-    .name          = "perlin",
-    .description   = NULL_IF_CONFIG_SMALL("Generate Perlin noise"),
+const FFFilter ff_vsrc_perlin = {
+    .p.name        = "perlin",
+    .p.description = NULL_IF_CONFIG_SMALL("Generate Perlin noise"),
+    .p.priv_class  = &perlin_class,
+    .p.inputs      = NULL,
     .priv_size     = sizeof(PerlinContext),
-    .priv_class    = &perlin_class,
     .init          = init,
-    .inputs        = NULL,
     FILTER_OUTPUTS(perlin_outputs),
     FILTER_QUERY_FUNC2(query_formats),
 };

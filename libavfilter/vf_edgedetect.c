@@ -116,7 +116,7 @@ static int query_formats(const AVFilterContext *ctx,
     } else {
         av_assert0(0);
     }
-    return ff_set_common_formats_from_list2(ctx, cfg_in, cfg_out, pix_fmts);
+    return ff_set_pixel_formats_from_list2(ctx, cfg_in, cfg_out, pix_fmts);
 }
 
 static int config_props(AVFilterLink *inlink)
@@ -252,15 +252,15 @@ static const AVFilterPad edgedetect_inputs[] = {
     },
 };
 
-const AVFilter ff_vf_edgedetect = {
-    .name          = "edgedetect",
-    .description   = NULL_IF_CONFIG_SMALL("Detect and draw edge."),
+const FFFilter ff_vf_edgedetect = {
+    .p.name        = "edgedetect",
+    .p.description = NULL_IF_CONFIG_SMALL("Detect and draw edge."),
+    .p.priv_class  = &edgedetect_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
     .priv_size     = sizeof(EdgeDetectContext),
     .init          = init,
     .uninit        = uninit,
     FILTER_INPUTS(edgedetect_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_QUERY_FUNC2(query_formats),
-    .priv_class    = &edgedetect_class,
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
 };

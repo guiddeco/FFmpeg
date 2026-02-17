@@ -248,7 +248,8 @@ static int scale_vt_config_output(AVFilterLink *outlink)
     if (err < 0)
         return err;
 
-    ff_scale_adjust_dimensions(inlink, &s->output_width, &s->output_height, 0, 1);
+    ff_scale_adjust_dimensions(inlink, &s->output_width, &s->output_height,
+                               SCALE_FORCE_OAR_DISABLE, 1, 1.f);
 
     outlink->w = s->output_width;
     outlink->h = s->output_height;
@@ -320,16 +321,16 @@ static const AVFilterPad scale_vt_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_scale_vt = {
-    .name           = "scale_vt",
-    .description    = NULL_IF_CONFIG_SMALL("Scale Videotoolbox frames"),
+const FFFilter ff_vf_scale_vt = {
+    .p.name         = "scale_vt",
+    .p.description  = NULL_IF_CONFIG_SMALL("Scale Videotoolbox frames"),
+    .p.priv_class   = &scale_vt_class,
+    .p.flags        = AVFILTER_FLAG_HWDEVICE,
     .priv_size      = sizeof(ScaleVtContext),
     .init           = scale_vt_init,
     .uninit         = scale_vt_uninit,
     FILTER_INPUTS(scale_vt_inputs),
     FILTER_OUTPUTS(scale_vt_outputs),
     FILTER_SINGLE_PIXFMT(AV_PIX_FMT_VIDEOTOOLBOX),
-    .priv_class     = &scale_vt_class,
-    .flags          = AVFILTER_FLAG_HWDEVICE,
     .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 };

@@ -144,11 +144,11 @@ static int query_formats(const AVFilterContext *ctx,
     static const enum AVPixelFormat inpal_fmts[] = {AV_PIX_FMT_RGB32, AV_PIX_FMT_NONE};
     static const enum AVPixelFormat out_fmts[]   = {AV_PIX_FMT_PAL8,  AV_PIX_FMT_NONE};
     int ret;
-    if ((ret = ff_formats_ref(ff_make_format_list(in_fmts),
+    if ((ret = ff_formats_ref(ff_make_pixel_format_list(in_fmts),
                               &cfg_in[0]->formats)) < 0 ||
-        (ret = ff_formats_ref(ff_make_format_list(inpal_fmts),
+        (ret = ff_formats_ref(ff_make_pixel_format_list(inpal_fmts),
                               &cfg_in[1]->formats)) < 0 ||
-        (ret = ff_formats_ref(ff_make_format_list(out_fmts),
+        (ret = ff_formats_ref(ff_make_pixel_format_list(out_fmts),
                               &cfg_out[0]->formats)) < 0)
         return ret;
     return 0;
@@ -997,9 +997,10 @@ static const AVFilterPad paletteuse_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_paletteuse = {
-    .name          = "paletteuse",
-    .description   = NULL_IF_CONFIG_SMALL("Use a palette to downsample an input video stream."),
+const FFFilter ff_vf_paletteuse = {
+    .p.name        = "paletteuse",
+    .p.description = NULL_IF_CONFIG_SMALL("Use a palette to downsample an input video stream."),
+    .p.priv_class  = &paletteuse_class,
     .priv_size     = sizeof(PaletteUseContext),
     .init          = init,
     .uninit        = uninit,
@@ -1007,5 +1008,4 @@ const AVFilter ff_vf_paletteuse = {
     FILTER_INPUTS(paletteuse_inputs),
     FILTER_OUTPUTS(paletteuse_outputs),
     FILTER_QUERY_FUNC2(query_formats),
-    .priv_class    = &paletteuse_class,
 };

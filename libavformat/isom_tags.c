@@ -240,6 +240,10 @@ const AVCodecTag ff_codec_movvideo_tags[] = {
     { AV_CODEC_ID_PRORES, MKTAG('a', 'p', 'c', 'o') }, /* Apple ProRes 422 Proxy */
     { AV_CODEC_ID_PRORES, MKTAG('a', 'p', '4', 'h') }, /* Apple ProRes 4444 */
     { AV_CODEC_ID_PRORES, MKTAG('a', 'p', '4', 'x') }, /* Apple ProRes 4444 XQ */
+
+    { AV_CODEC_ID_PRORES_RAW, MKTAG('a', 'p', 'r', 'n') }, /* Apple ProRes RAW */
+    { AV_CODEC_ID_PRORES_RAW, MKTAG('a', 'p', 'r', 'h') }, /* Apple ProRes RAW HQ */
+
     { AV_CODEC_ID_FLIC,   MKTAG('f', 'l', 'i', 'c') },
 
     { AV_CODEC_ID_AIC, MKTAG('i', 'c', 'o', 'd') },
@@ -297,6 +301,10 @@ const AVCodecTag ff_codec_movvideo_tags[] = {
 
     { AV_CODEC_ID_LCEVC, MKTAG('l', 'v', 'c', '1') }, /* LCEVC raw payload */
 
+    { AV_CODEC_ID_AVS3, MKTAG('a', 'v', 's', '3') },
+
+    { AV_CODEC_ID_APV, MKTAG('a', 'p', 'v', '1') },
+
     { AV_CODEC_ID_NONE, 0 },
 };
 
@@ -340,8 +348,10 @@ const AVCodecTag ff_codec_movaudio_tags[] = {
     { AV_CODEC_ID_PCM_S16LE,       MKTAG('l', 'p', 'c', 'm') },
     { AV_CODEC_ID_PCM_S24BE,       MKTAG('i', 'n', '2', '4') },
     { AV_CODEC_ID_PCM_S24LE,       MKTAG('i', 'n', '2', '4') },
+    { AV_CODEC_ID_PCM_S24LE,       MKTAG('4', '2', 'n', 'i') },
     { AV_CODEC_ID_PCM_S32BE,       MKTAG('i', 'n', '3', '2') },
     { AV_CODEC_ID_PCM_S32LE,       MKTAG('i', 'n', '3', '2') },
+    { AV_CODEC_ID_PCM_S32LE,       MKTAG('2', '3', 'n', 'i') },
     { AV_CODEC_ID_PCM_S8,          MKTAG('s', 'o', 'w', 't') },
     { AV_CODEC_ID_PCM_U8,          MKTAG('r', 'a', 'w', ' ') },
     { AV_CODEC_ID_PCM_U8,          MKTAG('N', 'O', 'N', 'E') },

@@ -832,20 +832,20 @@ static const AVClass x##_class = { \
     .option     = x##_options, \
     .version    = LIBAVUTIL_VERSION_INT, \
 }; \
-const AVFilter ff_vf_##sn##_qsv = { \
-    .name           = #sn "_qsv", \
-    .description    = NULL_IF_CONFIG_SMALL("Quick Sync Video " #ln), \
+const FFFilter ff_vf_##sn##_qsv = { \
+    .p.name         = #sn "_qsv", \
+    .p.description  = NULL_IF_CONFIG_SMALL("Quick Sync Video " #ln), \
+    .p.priv_class   = &x##_class, \
+    .p.flags        = AVFILTER_FLAG_HWDEVICE, \
     .preinit        = x##_preinit, \
     .init           = vpp_init, \
     .uninit         = vpp_uninit, \
     .priv_size      = sizeof(VPPContext), \
-    .priv_class     = &x##_class, \
     FILTER_INPUTS(vpp_inputs), \
     FILTER_OUTPUTS(vpp_outputs), \
     fmts, \
     .activate       = activate, \
     .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE, \
-    .flags          = AVFILTER_FLAG_HWDEVICE,       \
 };
 
 #if CONFIG_VPP_QSV_FILTER
@@ -952,7 +952,7 @@ static int vpp_query_formats(const AVFilterContext *ctx,
     };
     static enum AVPixelFormat out_pix_fmts[4];
 
-    ret = ff_formats_ref(ff_make_format_list(in_pix_fmts),
+    ret = ff_formats_ref(ff_make_pixel_format_list(in_pix_fmts),
                          &cfg_in[0]->formats);
     if (ret < 0)
         return ret;
@@ -969,7 +969,7 @@ static int vpp_query_formats(const AVFilterContext *ctx,
     out_pix_fmts[i++] = AV_PIX_FMT_QSV;
     out_pix_fmts[i++] = AV_PIX_FMT_NONE;
 
-    return ff_formats_ref(ff_make_format_list(out_pix_fmts),
+    return ff_formats_ref(ff_make_pixel_format_list(out_pix_fmts),
                           &cfg_out[0]->formats);
 }
 

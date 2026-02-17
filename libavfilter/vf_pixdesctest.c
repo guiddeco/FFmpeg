@@ -48,7 +48,7 @@ static int config_props(AVFilterLink *inlink)
     priv->pix_desc = av_pix_fmt_desc_get(inlink->format);
 
     av_freep(&priv->line);
-    if (!(priv->line = av_malloc_array(sizeof(*priv->line), inlink->w)))
+    if (!(priv->line = av_malloc_array(inlink->w, sizeof(*priv->line))))
         return AVERROR(ENOMEM);
 
     return 0;
@@ -116,9 +116,9 @@ static const AVFilterPad avfilter_vf_pixdesctest_inputs[] = {
     },
 };
 
-const AVFilter ff_vf_pixdesctest = {
-    .name        = "pixdesctest",
-    .description = NULL_IF_CONFIG_SMALL("Test pixel format definitions."),
+const FFFilter ff_vf_pixdesctest = {
+    .p.name        = "pixdesctest",
+    .p.description = NULL_IF_CONFIG_SMALL("Test pixel format definitions."),
     .priv_size   = sizeof(PixdescTestContext),
     .uninit      = uninit,
     FILTER_INPUTS(avfilter_vf_pixdesctest_inputs),

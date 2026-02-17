@@ -227,6 +227,7 @@ static int open_stream(AVFilterContext *ctx, MovieStream *st, int dec_threads)
     ret = avcodec_parameters_to_context(st->codec_ctx, st->st->codecpar);
     if (ret < 0)
         return ret;
+    st->codec_ctx->pkt_timebase = st->st->time_base;
 
     if (!dec_threads)
         dec_threads = ff_filter_get_nb_threads(ctx);
@@ -520,24 +521,26 @@ static int decode_packet(AVFilterContext *ctx, int i)
     AVPacket *pkt = movie->pkt;
     int ret = 0;
 
-    // submit the packet to the decoder
-    if (!movie->eof) {
+    // do not output more than 1 frame per iteration,
+    // so try to receive_frame first
+    ret = avcodec_receive_frame(dec, frame);
+    if (!movie->eof && ret == AVERROR(EAGAIN)) {
         ret = avcodec_send_packet(dec, pkt);
+        av_packet_unref(pkt);
         if (ret < 0)
             return ret;
+        ret = avcodec_receive_frame(dec, frame);
+    }
+    if (ret < 0) {
+        // those two return values are special and mean there is no output
+        // frame available, but there were no errors during decoding
+        if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN))
+            return 0;
+        return ret;
     }
 
-    // get all the available frames from the decoder
+    // output a single frame
     if (ret >= 0) {
-        ret = avcodec_receive_frame(dec, frame);
-        if (ret < 0) {
-            // those two return values are special and mean there is no output
-            // frame available, but there were no errors during decoding
-            if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN))
-                return 0;
-            return ret;
-        }
-
         frame->pts = frame->best_effort_timestamp;
         if (frame->pts != AV_NOPTS_VALUE) {
             if (movie->ts_offset)
@@ -567,7 +570,7 @@ static int decode_packet(AVFilterContext *ctx, int i)
 static int activate(AVFilterContext *ctx)
 {
     MovieContext *movie = ctx->priv;
-    int wanted = 0, ret;
+    int wanted = 0, ret = 0;
 
     for (int i = 0; i < ctx->nb_outputs; i++) {
         if (ff_outlink_frame_wanted(ctx->outputs[i]))
@@ -578,7 +581,8 @@ static int activate(AVFilterContext *ctx)
         return FFERROR_NOT_READY;
 
     if (!movie->eof) {
-        ret = av_read_frame(movie->format_ctx, movie->pkt);
+        if (!movie->pkt->buf)
+            ret = av_read_frame(movie->format_ctx, movie->pkt);
         if (ret < 0) {
             movie->eof = 1;
             for (int i = 0; i < ctx->nb_outputs; i++)
@@ -591,8 +595,9 @@ static int activate(AVFilterContext *ctx)
 
             if (pkt_out_id >= 0) {
                 ret = decode_packet(ctx, pkt_out_id);
+            } else {
+                av_packet_unref(movie->pkt);
             }
-            av_packet_unref(movie->pkt);
             ff_filter_set_ready(ctx, 100);
             return (ret <= 0) ? ret : 0;
         }
@@ -681,19 +686,17 @@ AVFILTER_DEFINE_CLASS_EXT(movie, "(a)movie", movie_options);
 
 #if CONFIG_MOVIE_FILTER
 
-const AVFilter ff_avsrc_movie = {
-    .name          = "movie",
-    .description   = NULL_IF_CONFIG_SMALL("Read from a movie source."),
+const FFFilter ff_avsrc_movie = {
+    .p.name        = "movie",
+    .p.description = NULL_IF_CONFIG_SMALL("Read from a movie source."),
+    .p.priv_class  = &movie_class,
+    .p.flags       = AVFILTER_FLAG_DYNAMIC_OUTPUTS,
     .priv_size     = sizeof(MovieContext),
-    .priv_class    = &movie_class,
     .init          = movie_common_init,
     .activate      = activate,
     .uninit        = movie_uninit,
     FILTER_QUERY_FUNC2(movie_query_formats),
 
-    .inputs    = NULL,
-    .outputs   = NULL,
-    .flags     = AVFILTER_FLAG_DYNAMIC_OUTPUTS,
     .process_command = process_command
 };
 
@@ -701,19 +704,17 @@ const AVFilter ff_avsrc_movie = {
 
 #if CONFIG_AMOVIE_FILTER
 
-const AVFilter ff_avsrc_amovie = {
-    .name          = "amovie",
-    .description   = NULL_IF_CONFIG_SMALL("Read audio from a movie source."),
-    .priv_class    = &movie_class,
+const FFFilter ff_avsrc_amovie = {
+    .p.name        = "amovie",
+    .p.description = NULL_IF_CONFIG_SMALL("Read audio from a movie source."),
+    .p.priv_class  = &movie_class,
+    .p.flags       = AVFILTER_FLAG_DYNAMIC_OUTPUTS,
     .priv_size     = sizeof(MovieContext),
     .init          = movie_common_init,
     .activate      = activate,
     .uninit        = movie_uninit,
     FILTER_QUERY_FUNC2(movie_query_formats),
 
-    .inputs     = NULL,
-    .outputs    = NULL,
-    .flags      = AVFILTER_FLAG_DYNAMIC_OUTPUTS,
     .process_command = process_command,
 };
 

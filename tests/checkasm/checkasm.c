@@ -58,6 +58,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "checkasm.h"
+#include "libavutil/avassert.h"
 #include "libavutil/common.h"
 #include "libavutil/cpu.h"
 #include "libavutil/intfloat.h"
@@ -114,6 +115,9 @@ static const struct {
     const char *name;
     void (*func)(void);
 } tests[] = {
+    /* NOTE: When adding a new test to this list here, it also needs to be
+     * added in tests/fate/checkasm.mak, otherwise it doesn't get executed
+     * as part of "make fate" or "make fate-checkasm". */
 #if CONFIG_AVCODEC
     #if CONFIG_AAC_DECODER
         { "aacpsdsp", checkasm_check_aacpsdsp },
@@ -128,6 +132,9 @@ static const struct {
     #if CONFIG_ALAC_DECODER
         { "alacdsp", checkasm_check_alacdsp },
     #endif
+    #if CONFIG_APV_DECODER
+        { "apv_dsp", checkasm_check_apv_dsp },
+    #endif
     #if CONFIG_AUDIODSP
         { "audiodsp", checkasm_check_audiodsp },
     #endif
@@ -137,7 +144,11 @@ static const struct {
     #if CONFIG_BSWAPDSP
         { "bswapdsp", checkasm_check_bswapdsp },
     #endif
+    #if CONFIG_CAVS_DECODER
+        { "cavsdsp", checkasm_check_cavsdsp },
+    #endif
     #if CONFIG_DCA_DECODER
+        { "dcadsp", checkasm_check_dcadsp },
         { "synth_filter", checkasm_check_synth_filter },
     #endif
     #if CONFIG_DIRAC_DECODER
@@ -176,9 +187,13 @@ static const struct {
     #if CONFIG_HEVC_DECODER
         { "hevc_add_res", checkasm_check_hevc_add_res },
         { "hevc_deblock", checkasm_check_hevc_deblock },
+        { "hevc_dequant", checkasm_check_hevc_dequant },
         { "hevc_idct", checkasm_check_hevc_idct },
         { "hevc_pel", checkasm_check_hevc_pel },
         { "hevc_sao", checkasm_check_hevc_sao },
+    #endif
+    #if CONFIG_HPELDSP
+        { "hpeldsp", checkasm_check_hpeldsp },
     #endif
     #if CONFIG_HUFFYUV_DECODER
         { "huffyuvdsp", checkasm_check_huffyuvdsp },
@@ -196,7 +211,7 @@ static const struct {
         { "llviddsp", checkasm_check_llviddsp },
     #endif
     #if CONFIG_LLVIDENCDSP
-        { "llviddspenc", checkasm_check_llviddspenc },
+        { "llvidencdsp", checkasm_check_llvidencdsp },
     #endif
     #if CONFIG_LPC
         { "lpc", checkasm_check_lpc },
@@ -204,7 +219,10 @@ static const struct {
     #if CONFIG_ME_CMP
         { "motion", checkasm_check_motion },
     #endif
-    #if CONFIG_MPEGVIDEOENC
+    #if CONFIG_MPEGVIDEO
+        { "mpegvideo_unquantize", checkasm_check_mpegvideo_unquantize },
+    #endif
+    #if CONFIG_MPEGVIDEOENCDSP
         { "mpegvideoencdsp", checkasm_check_mpegvideoencdsp },
     #endif
     #if CONFIG_OPUS_DECODER
@@ -212,6 +230,12 @@ static const struct {
     #endif
     #if CONFIG_PIXBLOCKDSP
         { "pixblockdsp", checkasm_check_pixblockdsp },
+    #endif
+    #if CONFIG_PNG_DECODER
+        { "png", checkasm_check_png },
+    #endif
+    #if CONFIG_QPELDSP
+        { "qpeldsp", checkasm_check_qpeldsp },
     #endif
     #if CONFIG_RV34DSP
         { "rv34dsp", checkasm_check_rv34dsp },
@@ -237,11 +261,21 @@ static const struct {
     #if CONFIG_VC1DSP
         { "vc1dsp", checkasm_check_vc1dsp },
     #endif
+    #if CONFIG_VP3DSP
+        { "vp3dsp", checkasm_check_vp3dsp },
+    #endif
+    #if CONFIG_VP6_DECODER
+        { "vp6dsp", checkasm_check_vp6dsp },
+    #endif
     #if CONFIG_VP8DSP
         { "vp8dsp", checkasm_check_vp8dsp },
     #endif
     #if CONFIG_VP9_DECODER
-        { "vp9dsp", checkasm_check_vp9dsp },
+        { "vp9dsp", checkasm_check_vp9dsp }, // all of the below
+        { "vp9_ipred", checkasm_check_vp9_ipred },
+        { "vp9_itxfm", checkasm_check_vp9_itxfm },
+        { "vp9_loopfilter", checkasm_check_vp9_loopfilter },
+        { "vp9_mc", checkasm_check_vp9_mc },
     #endif
     #if CONFIG_VIDEODSP
         { "videodsp", checkasm_check_videodsp },
@@ -252,11 +286,18 @@ static const struct {
     #if CONFIG_VVC_DECODER
         { "vvc_alf", checkasm_check_vvc_alf },
         { "vvc_mc",  checkasm_check_vvc_mc  },
+        { "vvc_sao", checkasm_check_vvc_sao },
     #endif
 #endif
 #if CONFIG_AVFILTER
+    #if CONFIG_SCENE_SAD
+        { "scene_sad", checkasm_check_scene_sad },
+    #endif
     #if CONFIG_AFIR_FILTER
         { "af_afir", checkasm_check_afir },
+    #endif
+    #if CONFIG_BLACKDETECT_FILTER
+        { "vf_blackdetect", checkasm_check_blackdetect },
     #endif
     #if CONFIG_BLEND_FILTER
         { "vf_blend", checkasm_check_blend },
@@ -264,17 +305,26 @@ static const struct {
     #if CONFIG_BWDIF_FILTER
         { "vf_bwdif", checkasm_check_vf_bwdif },
     #endif
+    #if CONFIG_COLORDETECT_FILTER
+        { "vf_colordetect", checkasm_check_colordetect },
+    #endif
     #if CONFIG_COLORSPACE_FILTER
         { "vf_colorspace", checkasm_check_colorspace },
     #endif
     #if CONFIG_EQ_FILTER
         { "vf_eq", checkasm_check_vf_eq },
     #endif
+    #if CONFIG_FSPP_FILTER
+        { "vf_fspp", checkasm_check_vf_fspp },
+    #endif
     #if CONFIG_GBLUR_FILTER
         { "vf_gblur", checkasm_check_vf_gblur },
     #endif
     #if CONFIG_HFLIP_FILTER
         { "vf_hflip", checkasm_check_vf_hflip },
+    #endif
+    #if CONFIG_IDET_FILTER
+        { "vf_idet", checkasm_check_idet },
     #endif
     #if CONFIG_NLMEANS_FILTER
         { "vf_nlmeans", checkasm_check_nlmeans },
@@ -291,16 +341,23 @@ static const struct {
     { "sw_range_convert", checkasm_check_sw_range_convert },
     { "sw_rgb", checkasm_check_sw_rgb },
     { "sw_scale", checkasm_check_sw_scale },
+    { "sw_xyz2rgb", checkasm_check_sw_xyz2rgb },
     { "sw_yuv2rgb", checkasm_check_sw_yuv2rgb },
     { "sw_yuv2yuv", checkasm_check_sw_yuv2yuv },
+    { "sw_ops", checkasm_check_sw_ops },
 #endif
 #if CONFIG_AVUTIL
+        { "aes",       checkasm_check_aes },
+        { "crc",       checkasm_check_crc },
         { "fixed_dsp", checkasm_check_fixed_dsp },
         { "float_dsp", checkasm_check_float_dsp },
         { "lls",       checkasm_check_lls },
         { "av_tx",     checkasm_check_av_tx },
 #endif
     { NULL }
+    /* NOTE: When adding a new test to this list here, it also needs to be
+     * added in tests/fate/checkasm.mak, otherwise it doesn't get executed
+     * as part of "make fate" or "make fate-checkasm". */
 };
 
 /* List of cpu flags to check */
@@ -316,6 +373,8 @@ static const struct {
     { "I8MM",     "i8mm",     AV_CPU_FLAG_I8MM },
     { "SVE",      "sve",      AV_CPU_FLAG_SVE },
     { "SVE2",     "sve2",     AV_CPU_FLAG_SVE2 },
+    { "SME",      "sme",      AV_CPU_FLAG_SME },
+    { "CRC",      "crc",      AV_CPU_FLAG_ARM_CRC },
 #elif ARCH_ARM
     { "ARMV5TE",  "armv5te",  AV_CPU_FLAG_ARMV5TE },
     { "ARMV6",    "armv6",    AV_CPU_FLAG_ARMV6 },
@@ -344,8 +403,6 @@ static const struct {
 #elif ARCH_X86
     { "MMX",        "mmx",       AV_CPU_FLAG_MMX|AV_CPU_FLAG_CMOV },
     { "MMXEXT",     "mmxext",    AV_CPU_FLAG_MMXEXT },
-    { "3DNOW",      "3dnow",     AV_CPU_FLAG_3DNOW },
-    { "3DNOWEXT",   "3dnowext",  AV_CPU_FLAG_3DNOWEXT },
     { "SSE",        "sse",       AV_CPU_FLAG_SSE },
     { "SSE2",       "sse2",      AV_CPU_FLAG_SSE2|AV_CPU_FLAG_SSE2SLOW },
     { "SSE3",       "sse3",      AV_CPU_FLAG_SSE3|AV_CPU_FLAG_SSE3SLOW },
@@ -353,6 +410,7 @@ static const struct {
     { "SSE4.1",     "sse4",      AV_CPU_FLAG_SSE4 },
     { "SSE4.2",     "sse42",     AV_CPU_FLAG_SSE42 },
     { "AES-NI",     "aesni",     AV_CPU_FLAG_AESNI },
+    { "CLMUL",      "clmul",     AV_CPU_FLAG_CLMUL },
     { "AVX",        "avx",       AV_CPU_FLAG_AVX },
     { "XOP",        "xop",       AV_CPU_FLAG_XOP },
     { "FMA3",       "fma3",      AV_CPU_FLAG_FMA3 },
@@ -622,7 +680,7 @@ static inline double avg_cycles_per_call(const CheckasmPerf *const p)
     if (p->iterations) {
         const double cycles = (double)(10 * p->cycles) / p->iterations - state.nop_time;
         if (cycles > 0.0)
-            return cycles / 4.0; /* 4 calls per iteration */
+            return cycles / 32.0; /* 32 calls per iteration */
     }
     return 0.0;
 }
@@ -995,7 +1053,13 @@ int main(int argc, char *argv[])
     if (have_sve(av_get_cpu_flags()))
         snprintf(arch_info_buf, sizeof(arch_info_buf),
                  "SVE %d bits, ", 8 * ff_aarch64_sve_length());
-#elif ARCH_RISCV && HAVE_RVV
+#endif
+#if ARCH_AARCH64 && HAVE_SME
+    if (have_sme(av_get_cpu_flags()))
+        av_strlcatf(arch_info_buf, sizeof(arch_info_buf),
+                    "SME %d bits, ", 8 * ff_aarch64_sme_length());
+#endif
+#if ARCH_RISCV && HAVE_RVV
     if (av_get_cpu_flags() & AV_CPU_FLAG_RVV_I32)
         snprintf(arch_info_buf, sizeof (arch_info_buf),
                  "%zu-bit vectors, ", 8 * ff_get_rv_vlenb());
@@ -1081,8 +1145,9 @@ int checkasm_bench_func(void)
            !wildstrcmp(state.current_func->name, state.bench_pattern);
 }
 
-/* Indicate that the current test has failed */
-void checkasm_fail_func(const char *msg, ...)
+/* Indicate that the current test has failed, return whether verbose printing
+ * is requested. */
+int checkasm_fail_func(const char *msg, ...)
 {
     if (state.current_func_ver && state.current_func_ver->cpu &&
         state.current_func_ver->ok)
@@ -1099,6 +1164,7 @@ void checkasm_fail_func(const char *msg, ...)
         state.current_func_ver->ok = 0;
         state.num_failed++;
     }
+    return state.verbose;
 }
 
 void checkasm_set_signal_handler_state(int enabled) {
@@ -1166,38 +1232,96 @@ void checkasm_report(const char *name, ...)
     }
 }
 
+static int check_err(const char *file, int line,
+                     const char *name, int w, int h,
+                     int *err)
+{
+    if (*err)
+        return 0;
+    if (!checkasm_fail_func("%s:%d", file, line))
+        return 1;
+    *err = 1;
+    fprintf(stderr, "%s (%dx%d):\n", name, w, h);
+    return 0;
+}
+
+#define DEF_CHECKASM_CHECK_BODY(compare, type, fmt) \
+do { \
+    int64_t aligned_w = (w - 1LL + align_w) & ~(align_w - 1); \
+    int64_t aligned_h = (h - 1LL + align_h) & ~(align_h - 1); \
+    int err = 0; \
+    int y = 0; \
+    av_assert0(aligned_w == (int32_t)aligned_w);\
+    av_assert0(aligned_h == (int32_t)aligned_h);\
+    stride1 /= sizeof(*buf1); \
+    stride2 /= sizeof(*buf2); \
+    for (y = 0; y < h; y++) \
+        if (!compare(&buf1[y*stride1], &buf2[y*stride2], w)) \
+            break; \
+    if (y != h) { \
+        if (check_err(file, line, name, w, h, &err)) \
+            return 1; \
+        for (y = 0; y < h; y++) { \
+            for (int x = 0; x < w; x++) \
+                fprintf(stderr, " " fmt, buf1[x]); \
+            fprintf(stderr, "    "); \
+            for (int x = 0; x < w; x++) \
+                fprintf(stderr, " " fmt, buf2[x]); \
+            fprintf(stderr, "    "); \
+            for (int x = 0; x < w; x++) \
+                fprintf(stderr, "%c", buf1[x] != buf2[x] ? 'x' : '.'); \
+            buf1 += stride1; \
+            buf2 += stride2; \
+            fprintf(stderr, "\n"); \
+        } \
+        buf1 -= h*stride1; \
+        buf2 -= h*stride2; \
+    } \
+    for (y = -padding; y < 0; y++) \
+        if (!compare(&buf1[y*stride1 - padding], &buf2[y*stride2 - padding], \
+                     w + 2*padding)) { \
+            if (check_err(file, line, name, w, h, &err)) \
+                return 1; \
+            fprintf(stderr, " overwrite above\n"); \
+            break; \
+        } \
+    for (y = aligned_h; y < aligned_h + padding; y++) \
+        if (!compare(&buf1[y*stride1 - padding], &buf2[y*stride2 - padding], \
+                     w + 2*padding)) { \
+            if (check_err(file, line, name, w, h, &err)) \
+                return 1; \
+            fprintf(stderr, " overwrite below\n"); \
+            break; \
+        } \
+    for (y = 0; y < h; y++) \
+        if (!compare(&buf1[y*stride1 - padding], &buf2[y*stride2 - padding], \
+                     padding)) { \
+            if (check_err(file, line, name, w, h, &err)) \
+                return 1; \
+            fprintf(stderr, " overwrite left\n"); \
+            break; \
+        } \
+    for (y = 0; y < h; y++) \
+        if (!compare(&buf1[y*stride1 + aligned_w], &buf2[y*stride2 + aligned_w], \
+                     padding)) { \
+            if (check_err(file, line, name, w, h, &err)) \
+                return 1; \
+            fprintf(stderr, " overwrite right\n"); \
+            break; \
+        } \
+    return err; \
+} while (0)
+
+#define cmp_int(a, b, len) (!memcmp(a, b, (len) * sizeof(*(a))))
 #define DEF_CHECKASM_CHECK_FUNC(type, fmt) \
 int checkasm_check_##type(const char *file, int line, \
                           const type *buf1, ptrdiff_t stride1, \
                           const type *buf2, ptrdiff_t stride2, \
-                          int w, int h, const char *name) \
+                          int w, int h, const char *name, \
+                          int align_w, int align_h, \
+                          int padding) \
 { \
-    int y = 0; \
-    stride1 /= sizeof(*buf1); \
-    stride2 /= sizeof(*buf2); \
-    for (y = 0; y < h; y++) \
-        if (memcmp(&buf1[y*stride1], &buf2[y*stride2], w*sizeof(*buf1))) \
-            break; \
-    if (y == h) \
-        return 0; \
-    checkasm_fail_func("%s:%d", file, line); \
-    if (!state.verbose) \
-        return 1; \
-    fprintf(stderr, "%s:\n", name); \
-    while (h--) { \
-        for (int x = 0; x < w; x++) \
-            fprintf(stderr, " " fmt, buf1[x]); \
-        fprintf(stderr, "    "); \
-        for (int x = 0; x < w; x++) \
-            fprintf(stderr, " " fmt, buf2[x]); \
-        fprintf(stderr, "    "); \
-        for (int x = 0; x < w; x++) \
-            fprintf(stderr, "%c", buf1[x] != buf2[x] ? 'x' : '.'); \
-        buf1 += stride1; \
-        buf2 += stride2; \
-        fprintf(stderr, "\n"); \
-    } \
-    return 1; \
+    DEF_CHECKASM_CHECK_BODY(cmp_int, type, fmt); \
 }
 
 DEF_CHECKASM_CHECK_FUNC(uint8_t,  "%02x")
@@ -1205,3 +1329,15 @@ DEF_CHECKASM_CHECK_FUNC(uint16_t, "%04x")
 DEF_CHECKASM_CHECK_FUNC(uint32_t, "%08x")
 DEF_CHECKASM_CHECK_FUNC(int16_t,  "%6d")
 DEF_CHECKASM_CHECK_FUNC(int32_t,  "%9d")
+
+int checkasm_check_float_ulp(const char *file, int line,
+                             const float *buf1, ptrdiff_t stride1,
+                             const float *buf2, ptrdiff_t stride2,
+                             int w, int h, const char *name,
+                             unsigned max_ulp, int align_w, int align_h,
+                             int padding)
+{
+    #define cmp_float(a, b, len) float_near_ulp_array(a, b, max_ulp, len)
+    DEF_CHECKASM_CHECK_BODY(cmp_float, float, "%g");
+    #undef cmp_float
+}

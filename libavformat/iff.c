@@ -37,6 +37,7 @@
 #include "libavutil/mem.h"
 #include "libavcodec/bytestream.h"
 #include "avformat.h"
+#include "avio_internal.h"
 #include "demux.h"
 #include "id3v2.h"
 #include "internal.h"
@@ -135,13 +136,14 @@ static int get_metadata(AVFormatContext *s,
                         const unsigned data_size)
 {
     uint8_t *buf = ((data_size + 1) == 0) ? NULL : av_malloc(data_size + 1);
+    int res;
 
     if (!buf)
         return AVERROR(ENOMEM);
 
-    if (avio_read(s->pb, buf, data_size) != data_size) {
+    if ((res = ffio_read_size(s->pb, buf, data_size)) < 0) {
         av_free(buf);
-        return AVERROR(EIO);
+        return res;
     }
     buf[data_size] = 0;
     av_dict_set(&s->metadata, tag, buf, AV_DICT_DONT_STRDUP_VAL);
@@ -284,7 +286,7 @@ static int parse_dsd_prop(AVFormatContext *s, AVStream *st, uint64_t eof)
                 return AVERROR_INVALIDDATA;
             st->codecpar->ch_layout.order       = AV_CHANNEL_ORDER_UNSPEC;
             st->codecpar->ch_layout.nb_channels = avio_rb16(pb);
-            if (size < 2 + st->codecpar->ch_layout.nb_channels * 4)
+            if (size < 2 + st->codecpar->ch_layout.nb_channels * 4 || !st->codecpar->ch_layout.nb_channels)
                 return AVERROR_INVALIDDATA;
             if (st->codecpar->ch_layout.nb_channels > FF_ARRAY_ELEMS(dsd_layout)) {
                 avpriv_request_sample(s, "channel layout");
@@ -344,8 +346,10 @@ static int parse_dsd_prop(AVFormatContext *s, AVStream *st, uint64_t eof)
             if (config != 0xFFFF) {
                 if (config < FF_ARRAY_ELEMS(dsd_loudspeaker_config))
                     st->codecpar->ch_layout = dsd_loudspeaker_config[config];
-                if (!st->codecpar->ch_layout.nb_channels)
+                if (!st->codecpar->ch_layout.nb_channels) {
                     avpriv_request_sample(s, "loudspeaker configuration %d", config);
+                    return AVERROR_PATCHWELCOME;
+                }
             }
             break;
         }
@@ -363,6 +367,9 @@ static int read_dst_frame(AVFormatContext *s, AVPacket *pkt)
     uint32_t chunk_id;
     uint64_t chunk_pos, data_pos, data_size;
     int ret = AVERROR_EOF;
+
+    if (s->nb_streams < 1)
+        return AVERROR_INVALIDDATA;
 
     while (!avio_feof(pb)) {
         chunk_pos = avio_tell(pb);
@@ -507,6 +514,8 @@ static int iff_read_header(AVFormatContext *s)
                 sta->codecpar->ch_layout = (AVChannelLayout)AV_CHANNEL_LAYOUT_MONO;
             else if (sta->codecpar->ch_layout.nb_channels == 2)
                 sta->codecpar->ch_layout = (AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO;
+            else if (sta->codecpar->ch_layout.nb_channels == 0)
+                return AVERROR_INVALIDDATA;
             break;
 
         case ID_ABIT:
@@ -558,10 +567,10 @@ static int iff_read_header(AVFormatContext *s)
                                      data_size + IFF_EXTRA_VIDEO_SIZE);
             if (res < 0)
                 return res;
-            if (avio_read(pb, stv->codecpar->extradata + IFF_EXTRA_VIDEO_SIZE, data_size) < 0) {
+            if ((res = avio_read(pb, stv->codecpar->extradata + IFF_EXTRA_VIDEO_SIZE, data_size)) < 0) {
                 av_freep(&stv->codecpar->extradata);
                 stv->codecpar->extradata_size = 0;
-                return AVERROR(EIO);
+                return res;
             }
             break;
 
@@ -692,13 +701,15 @@ static int iff_read_header(AVFormatContext *s)
         /* DSD tags */
 
         case MKTAG('F','V','E','R'):
-            if (data_size < 4)
-                return AVERROR_INVALIDDATA;
-            version = avio_rb32(pb);
-            av_log(s, AV_LOG_DEBUG, "DSIFF v%d.%d.%d.%d\n",version >> 24, (version >> 16) & 0xFF, (version >> 8) & 0xFF, version & 0xFF);
-            if (!new_stream(s, &sta, &iff->audio_stream_index, AVMEDIA_TYPE_AUDIO))
-                return AVERROR(ENOMEM);
-            sta->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
+            if (iff->form_tag == ID_DSD || iff->form_tag == ID_DST) {
+                if (data_size < 4)
+                    return AVERROR_INVALIDDATA;
+                version = avio_rb32(pb);
+                av_log(s, AV_LOG_DEBUG, "DSIFF v%d.%d.%d.%d\n",version >> 24, (version >> 16) & 0xFF, (version >> 8) & 0xFF, version & 0xFF);
+                if (!new_stream(s, &sta, &iff->audio_stream_index, AVMEDIA_TYPE_AUDIO))
+                    return AVERROR(ENOMEM);
+                sta->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
+            }
             break;
 
         case MKTAG('D','I','I','N'):
@@ -962,9 +973,6 @@ static int iff_read_packet(AVFormatContext *s,
         uint32_t chunk_id, chunk_id2;
 
         while (!avio_feof(pb)) {
-            if (avio_feof(pb))
-                return AVERROR_EOF;
-
             orig_pos  = avio_tell(pb);
             chunk_id  = avio_rl32(pb);
             data_size = avio_rb32(pb);
@@ -981,6 +989,9 @@ static int iff_read_packet(AVFormatContext *s,
                 avio_skip(pb, data_size);
             }
         }
+        if (pb->eof_reached)
+            return AVERROR_EOF;
+
         ret = av_get_packet(pb, pkt, data_size);
         pkt->stream_index = iff->video_stream_index;
         pkt->pos = orig_pos;

@@ -433,7 +433,7 @@ static void celt_encode_frame(OpusEncContext *s, OpusRangeCoder *rc,
 
     if (f->silence) {
         if (f->framebits >= 16)
-            ff_opus_rc_enc_log(rc, 1, 15); /* Silence (if using explicit singalling) */
+            ff_opus_rc_enc_log(rc, 1, 15); /* Silence (if using explicit signalling) */
         for (int ch = 0; ch < s->channels; ch++)
             memset(s->last_quantized_energy[ch], 0.0f, sizeof(float)*CELT_MAX_BANDS);
         return;
@@ -604,7 +604,7 @@ static int opus_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
         uint8_t *side = av_packet_new_side_data(avpkt, AV_PKT_DATA_SKIP_SAMPLES, 10);
         if (!side)
             return AVERROR(ENOMEM);
-        AV_WL32(&side[4], s->packet.frames*frame_size - avpkt->duration + 120);
+        AV_WL32(&side[4], s->packet.frames*frame_size - avpkt->duration);
     }
 
     *got_packet_ptr = 1;
@@ -638,12 +638,8 @@ static av_cold int opus_encode_init(AVCodecContext *avctx)
     s->avctx = avctx;
     s->channels = avctx->ch_layout.nb_channels;
 
-    /* Opus allows us to change the framesize on each packet (and each packet may
-     * have multiple frames in it) but we can't change the codec's frame size on
-     * runtime, so fix it to the lowest possible number of samples and use a queue
-     * to accumulate AVFrames until we have enough to encode whatever the encoder
-     * decides is the best */
-    avctx->frame_size = 120;
+    int max_delay_samples = (s->options.max_delay_ms * s->avctx->sample_rate) / 1000;
+    avctx->frame_size = OPUS_BLOCK_SIZE(FFMIN(OPUS_SAMPLES_TO_BLOCK_SIZE(max_delay_samples), CELT_BLOCK_960));
     /* Initial padding will change if SILK is ever supported */
     avctx->initial_padding = 120;
 
@@ -746,9 +742,7 @@ const FFCodec ff_opus_encoder = {
     FF_CODEC_ENCODE_CB(opus_encode_frame),
     .close          = opus_encode_end,
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
-    .p.supported_samplerates = (const int []){ 48000, 0 },
-    .p.ch_layouts    = (const AVChannelLayout []){ AV_CHANNEL_LAYOUT_MONO,
-                                                   AV_CHANNEL_LAYOUT_STEREO, { 0 } },
-    .p.sample_fmts  = (const enum AVSampleFormat[]){ AV_SAMPLE_FMT_FLTP,
-                                                     AV_SAMPLE_FMT_NONE },
+    CODEC_SAMPLERATES(48000),
+    CODEC_CH_LAYOUTS(AV_CHANNEL_LAYOUT_MONO, AV_CHANNEL_LAYOUT_STEREO),
+    CODEC_SAMPLEFMTS(AV_SAMPLE_FMT_FLTP),
 };

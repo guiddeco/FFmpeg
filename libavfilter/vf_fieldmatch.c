@@ -823,20 +823,10 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
 
     /* mark the frame we are unable to match properly as interlaced so a proper
      * de-interlacer can take the relay */
-#if FF_API_INTERLACED_FRAME
-FF_DISABLE_DEPRECATION_WARNINGS
-    dst->interlaced_frame = interlaced_frame;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
     if (interlaced_frame) {
         dst->flags |= AV_FRAME_FLAG_INTERLACED;
         av_log(ctx, AV_LOG_WARNING, "Frame #%"PRId64" at %s is still interlaced\n",
                outl->frame_count_in, av_ts2timestr(in->pts, &inlink->time_base));
-#if FF_API_INTERLACED_FRAME
-FF_DISABLE_DEPRECATION_WARNINGS
-        dst->top_field_first = field;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
         if (field)
             dst->flags |= AV_FRAME_FLAG_TOP_FIELD_FIRST;
         else
@@ -937,7 +927,7 @@ static int query_formats(const AVFilterContext *ctx,
     };
     int ret;
 
-    AVFilterFormats *fmts_list = ff_make_format_list(pix_fmts);
+    AVFilterFormats *fmts_list = ff_make_pixel_format_list(pix_fmts);
     if (!fmts_list)
         return AVERROR(ENOMEM);
     if (!fm->ppsrc) {
@@ -946,7 +936,7 @@ static int query_formats(const AVFilterContext *ctx,
 
     if ((ret = ff_formats_ref(fmts_list, &cfg_in[INPUT_MAIN]->formats)) < 0)
         return ret;
-    fmts_list = ff_make_format_list(unproc_pix_fmts);
+    fmts_list = ff_make_pixel_format_list(unproc_pix_fmts);
     if (!fmts_list)
         return AVERROR(ENOMEM);
     if ((ret = ff_formats_ref(fmts_list, &cfg_out[0]->formats)) < 0)
@@ -1073,16 +1063,15 @@ static const AVFilterPad fieldmatch_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_fieldmatch = {
-    .name           = "fieldmatch",
-    .description    = NULL_IF_CONFIG_SMALL("Field matching for inverse telecine."),
+const FFFilter ff_vf_fieldmatch = {
+    .p.name         = "fieldmatch",
+    .p.description  = NULL_IF_CONFIG_SMALL("Field matching for inverse telecine."),
+    .p.priv_class   = &fieldmatch_class,
+    .p.flags        = AVFILTER_FLAG_DYNAMIC_INPUTS,
     .priv_size      = sizeof(FieldMatchContext),
     .init           = fieldmatch_init,
     .activate       = activate,
     .uninit         = fieldmatch_uninit,
-    .inputs         = NULL,
     FILTER_OUTPUTS(fieldmatch_outputs),
     FILTER_QUERY_FUNC2(query_formats),
-    .priv_class     = &fieldmatch_class,
-    .flags          = AVFILTER_FLAG_DYNAMIC_INPUTS,
 };

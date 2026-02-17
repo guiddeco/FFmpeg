@@ -432,7 +432,7 @@ static int query_formats(const AVFilterContext *ctx,
         AV_PIX_FMT_NONE
     };
 
-    return ff_set_common_formats_from_list2(ctx, cfg_in, cfg_out, pix_fmts);
+    return ff_set_pixel_formats_from_list2(ctx, cfg_in, cfg_out, pix_fmts);
 }
 
 static const AVFilterPad life_outputs[] = {
@@ -444,14 +444,14 @@ static const AVFilterPad life_outputs[] = {
     },
 };
 
-const AVFilter ff_vsrc_life = {
-    .name          = "life",
-    .description   = NULL_IF_CONFIG_SMALL("Create life."),
+const FFFilter ff_vsrc_life = {
+    .p.name        = "life",
+    .p.description = NULL_IF_CONFIG_SMALL("Create life."),
+    .p.priv_class  = &life_class,
+    .p.inputs      = NULL,
     .priv_size     = sizeof(LifeContext),
-    .priv_class    = &life_class,
     .init          = init,
     .uninit        = uninit,
-    .inputs        = NULL,
     FILTER_OUTPUTS(life_outputs),
     FILTER_QUERY_FUNC2(query_formats),
 };

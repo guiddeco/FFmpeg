@@ -23,6 +23,7 @@
 #include <stdio.h>
 
 #include "cmdutils.h"
+#include "fopen_utf8.h"
 #include "opt_common.h"
 
 #include "libavutil/avassert.h"
@@ -60,8 +61,6 @@
 #include "libswresample/swresample.h"
 #include "libswresample/version.h"
 
-#include "libpostproc/postprocess.h"
-#include "libpostproc/version.h"
 
 enum show_muxdemuxers {
     SHOW_DEFAULT,
@@ -191,7 +190,6 @@ static void print_all_libs_info(int flags, int level)
     PRINT_LIB_INFO(avfilter,   AVFILTER,   flags, level);
     PRINT_LIB_INFO(swscale,    SWSCALE,    flags, level);
     PRINT_LIB_INFO(swresample, SWRESAMPLE, flags, level);
-    PRINT_LIB_INFO(postproc,   POSTPROC,   flags, level);
 }
 
 static void print_program_info(int flags, int level)
@@ -811,7 +809,8 @@ int show_filters(void *optctx, const char *opt, const char *arg)
            "  A = Audio input/output\n"
            "  V = Video input/output\n"
            "  N = Dynamic number and/or type of input/output\n"
-           "  | = Source or sink filter\n");
+           "  | = Source or sink filter\n"
+           "  ------\n");
     while ((filter = av_filter_iterate(&opaque))) {
         descr_cur = descr;
         for (i = 0; i < 2; i++) {
@@ -993,7 +992,7 @@ int show_pix_fmts(void *optctx, const char *opt, const char *arg)
 #endif
 
     while ((pix_desc = av_pix_fmt_desc_next(pix_desc))) {
-        enum AVPixelFormat av_unused pix_fmt = av_pix_fmt_desc_get_id(pix_desc);
+        av_unused enum AVPixelFormat pix_fmt = av_pix_fmt_desc_get_id(pix_desc);
         printf("%c%c%c%c%c %-16s       %d            %3d      %d",
                sws_isSupportedInput (pix_fmt)              ? 'I' : '.',
                sws_isSupportedOutput(pix_fmt)              ? 'O' : '.',
@@ -1207,7 +1206,7 @@ int init_report(const char *env, FILE **file)
     if (!envlevel)
         report_file_level = FFMAX(report_file_level, prog_loglevel);
 
-    report_file = fopen(filename.str, "w");
+    report_file = fopen_utf8(filename.str, "w");
     if (!report_file) {
         int ret = AVERROR(errno);
         av_log(NULL, AV_LOG_ERROR, "Failed to open report \"%s\": %s\n",
@@ -1292,6 +1291,18 @@ int opt_loglevel(void *optctx, const char *opt, const char *arg)
             } else {
                 flags |= AV_LOG_PRINT_LEVEL;
             }
+        } else if (av_strstart(token, "time", &arg)) {
+            if (cmd == '-') {
+                flags &= ~AV_LOG_PRINT_TIME;
+            } else {
+                flags |= AV_LOG_PRINT_TIME;
+            }
+        } else if (av_strstart(token, "datetime", &arg)) {
+            if (cmd == '-') {
+                flags &= ~AV_LOG_PRINT_DATETIME;
+            } else {
+                flags |= AV_LOG_PRINT_DATETIME;
+            }
         } else {
             break;
         }
@@ -1318,6 +1329,11 @@ int opt_loglevel(void *optctx, const char *opt, const char *arg)
                "Possible levels are numbers or:\n", arg);
         for (i = 0; i < FF_ARRAY_ELEMS(log_levels); i++)
             av_log(NULL, AV_LOG_FATAL, "\"%s\"\n", log_levels[i].name);
+        av_log(NULL, AV_LOG_FATAL, "Possible flags are:\n");
+        av_log(NULL, AV_LOG_FATAL, "\"repeat\"\n");
+        av_log(NULL, AV_LOG_FATAL, "\"level\"\n");
+        av_log(NULL, AV_LOG_FATAL, "\"time\"\n");
+        av_log(NULL, AV_LOG_FATAL, "\"datetime\"\n");
         return AVERROR(EINVAL);
     }
 

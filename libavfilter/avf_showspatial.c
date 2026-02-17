@@ -90,7 +90,7 @@ static int query_formats(const AVFilterContext *ctx,
     static const AVChannelLayout layouts[] = { AV_CHANNEL_LAYOUT_STEREO, { .nb_channels = 0 } };
     int ret;
 
-    formats = ff_make_format_list(sample_fmts);
+    formats = ff_make_sample_format_list(sample_fmts);
     if ((ret = ff_formats_ref(formats, &cfg_in[0]->formats)) < 0)
         return ret;
 
@@ -98,7 +98,7 @@ static int query_formats(const AVFilterContext *ctx,
     if (ret < 0)
         return ret;
 
-    formats = ff_make_format_list(pix_fmts);
+    formats = ff_make_pixel_format_list(pix_fmts);
     if ((ret = ff_formats_ref(formats, &cfg_out[0]->formats)) < 0)
         return ret;
 
@@ -321,15 +321,15 @@ static const AVFilterPad showspatial_outputs[] = {
     },
 };
 
-const AVFilter ff_avf_showspatial = {
-    .name          = "showspatial",
-    .description   = NULL_IF_CONFIG_SMALL("Convert input audio to a spatial video output."),
+const FFFilter ff_avf_showspatial = {
+    .p.name        = "showspatial",
+    .p.description = NULL_IF_CONFIG_SMALL("Convert input audio to a spatial video output."),
+    .p.priv_class  = &showspatial_class,
+    .p.flags       = AVFILTER_FLAG_SLICE_THREADS,
     .uninit        = uninit,
     .priv_size     = sizeof(ShowSpatialContext),
     FILTER_INPUTS(ff_audio_default_filterpad),
     FILTER_OUTPUTS(showspatial_outputs),
     FILTER_QUERY_FUNC2(query_formats),
     .activate      = spatial_activate,
-    .priv_class    = &showspatial_class,
-    .flags         = AVFILTER_FLAG_SLICE_THREADS,
 };

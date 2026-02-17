@@ -101,11 +101,11 @@ static int query_formats(const AVFilterContext *ctx,
     static const enum AVPixelFormat pix_fmts[] = { AV_PIX_FMT_YUVA444P, AV_PIX_FMT_NONE };
     int ret = AVERROR(EINVAL);
 
-    formats = ff_make_format_list(sample_fmts);
+    formats = ff_make_sample_format_list(sample_fmts);
     if ((ret = ff_formats_ref(formats, &cfg_in[0]->formats)) < 0)
         return ret;
 
-    formats = ff_make_format_list(pix_fmts);
+    formats = ff_make_pixel_format_list(pix_fmts);
     if ((ret = ff_formats_ref(formats, &cfg_out[0]->formats)) < 0)
         return ret;
 
@@ -494,14 +494,14 @@ static const AVFilterPad ahistogram_outputs[] = {
     },
 };
 
-const AVFilter ff_avf_ahistogram = {
-    .name          = "ahistogram",
-    .description   = NULL_IF_CONFIG_SMALL("Convert input audio to histogram video output."),
+const FFFilter ff_avf_ahistogram = {
+    .p.name        = "ahistogram",
+    .p.description = NULL_IF_CONFIG_SMALL("Convert input audio to histogram video output."),
+    .p.priv_class  = &ahistogram_class,
     .uninit        = uninit,
     .priv_size     = sizeof(AudioHistogramContext),
     .activate      = activate,
     FILTER_INPUTS(ahistogram_inputs),
     FILTER_OUTPUTS(ahistogram_outputs),
     FILTER_QUERY_FUNC2(query_formats),
-    .priv_class    = &ahistogram_class,
 };

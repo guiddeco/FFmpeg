@@ -117,12 +117,12 @@ static int query_formats(const AVFilterContext *ctx,
     AVFilterFormats *pix_formats = NULL, *map_formats = NULL;
     int ret;
 
-    pix_formats = ff_make_format_list(s->format ? gray_pix_fmts : pix_fmts);
+    pix_formats = ff_make_pixel_format_list(s->format ? gray_pix_fmts : pix_fmts);
     if ((ret = ff_formats_ref(pix_formats, &cfg_in[0]->formats)) < 0 ||
         (ret = ff_formats_ref(pix_formats, &cfg_out[0]->formats)) < 0)
         return ret;
 
-    map_formats = ff_make_format_list(map_fmts);
+    map_formats = ff_make_pixel_format_list(map_fmts);
     if ((ret = ff_formats_ref(map_formats, &cfg_in[1]->formats)) < 0)
         return ret;
     return ff_formats_ref(map_formats, &cfg_in[2]->formats);
@@ -397,15 +397,15 @@ static const AVFilterPad remap_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_remap = {
-    .name          = "remap",
-    .description   = NULL_IF_CONFIG_SMALL("Remap pixels."),
+const FFFilter ff_vf_remap = {
+    .p.name        = "remap",
+    .p.description = NULL_IF_CONFIG_SMALL("Remap pixels."),
+    .p.priv_class  = &remap_class,
+    .p.flags       = AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(RemapContext),
     .uninit        = uninit,
     .activate      = activate,
     FILTER_INPUTS(remap_inputs),
     FILTER_OUTPUTS(remap_outputs),
     FILTER_QUERY_FUNC2(query_formats),
-    .priv_class    = &remap_class,
-    .flags         = AVFILTER_FLAG_SLICE_THREADS,
 };

@@ -23,12 +23,13 @@
 
 #include <stdatomic.h>
 
-#include "thread.h"
 #include "pixdesc.h"
 #include "bprint.h"
 #include "hwcontext.h"
 #include "vulkan_functions.h"
 #include "hwcontext_vulkan.h"
+#include "avassert.h"
+#include "intreadwrite.h"
 
 /* GLSL management macros */
 #define INDENT(N) INDENT_##N
@@ -70,7 +71,43 @@
             goto fail;                                                         \
     } while (0)
 
+/* Convenience macros for specialization lists */
+#define SPEC_LIST_MAX 256
+#define SPEC_LIST_CREATE(name, max_length, max_size)           \
+    av_assert1((max_length) < (SPEC_LIST_MAX - 3));            \
+    uint8_t name##_data[(max_size) + 3*sizeof(uint32_t)];      \
+    VkSpecializationMapEntry name##_entries[(max_length) + 3]; \
+    VkSpecializationInfo name##_info = {                       \
+        .pMapEntries = name##_entries,                         \
+        .pData = name##_data,                                  \
+    };                                                         \
+    VkSpecializationInfo *name = &name##_info;
+
+#define SPEC_LIST_ADD(name, idx, val_bits, val)                \
+do {                                                           \
+    unsigned int name##_cnt = name->mapEntryCount;             \
+    size_t name##_off = name->dataSize;                        \
+    uint8_t *name##_dp = (uint8_t *)name->pData;               \
+    void *name##_ep = (void *)&name->pMapEntries[name##_cnt];  \
+    AV_WN(val_bits, name##_dp + name##_off, (val));            \
+    VkSpecializationMapEntry name##_new_entry = {              \
+        .constantID = (idx),                                   \
+        .offset = name##_off,                                  \
+        .size = val_bits >> 3,                                 \
+    };                                                         \
+    memcpy(name##_ep, &name##_new_entry,                       \
+           sizeof(VkSpecializationMapEntry));                  \
+    name->dataSize = name##_off + (val_bits >> 3);             \
+    name->mapEntryCount = name##_cnt + 1;                      \
+} while (0)
+
 #define DUP_SAMPLER(x) { x, x, x, x }
+
+#define FF_VK_MAX_DESCRIPTOR_SETS 4
+#define FF_VK_MAX_DESCRIPTOR_BINDINGS 16
+#define FF_VK_MAX_DESCRIPTOR_TYPES 16
+#define FF_VK_MAX_PUSH_CONSTS 4
+#define FF_VK_MAX_SHADERS 16
 
 typedef struct FFVulkanDescriptorSetBinding {
     const char         *name;
@@ -81,6 +118,7 @@ typedef struct FFVulkanDescriptorSetBinding {
     uint32_t            dimensions;  /* Needed for e.g. sampler%iD */
     uint32_t            elems;       /* 0 - scalar, 1 or more - vector */
     VkShaderStageFlags  stages;
+    uint32_t            buf_elems;   /* Appends [buf_elems] to the contents. Avoids manually printing to a string. */
     VkSampler           samplers[4]; /* Sampler to use for all elems */
 } FFVulkanDescriptorSetBinding;
 
@@ -91,18 +129,22 @@ typedef struct FFVkBuffer {
     size_t size;
     VkDeviceAddress address;
 
-    /* Local use only */
-    VkPipelineStageFlags2 stage;
-    VkAccessFlags2 access;
-
-    /* Only valid when allocated via ff_vk_get_pooled_buffer with HOST_VISIBLE */
+    /* Only valid when allocated via ff_vk_get_pooled_buffer with HOST_VISIBLE or
+     * via ff_vk_host_map_buffer */
     uint8_t *mapped_mem;
+
+    /* Set by ff_vk_host_map_buffer. This is the offset at which the buffer data
+     * actually begins at.
+     * The address and mapped_mem fields will be offset by this amount. */
+    size_t virtual_offset;
+
+    /* If host mapping, reference to the backing host memory buffer */
+    AVBufferRef *host_ref;
 } FFVkBuffer;
 
 typedef struct FFVkExecContext {
     uint32_t idx;
     const struct FFVkExecPool *parent;
-    pthread_mutex_t lock;
     int had_submission;
 
     /* Queue for the execution context */
@@ -171,8 +213,9 @@ typedef struct FFVulkanDescriptorSet {
     VkDeviceSize aligned_size; /* descriptorBufferOffsetAlignment */
     VkBufferUsageFlags usage;
 
-    VkDescriptorSetLayoutBinding *binding;
-    VkDeviceSize *binding_offset;
+    VkDescriptorSetLayoutBinding binding[FF_VK_MAX_DESCRIPTOR_BINDINGS];
+    VkDeviceSize binding_offset[FF_VK_MAX_DESCRIPTOR_BINDINGS];
+
     int nb_bindings;
 
     /* Descriptor set is shared between all submissions */
@@ -183,11 +226,15 @@ typedef struct FFVulkanShader {
     /* Name for id/debugging purposes */
     const char *name;
 
+    /* Whether shader is precompiled or not */
+    int precompiled;
+    VkSpecializationInfo *specialization_info;
+
     /* Shader text */
     AVBPrint src;
 
     /* Compute shader local group sizes */
-    int lg_size[3];
+    uint32_t lg_size[3];
 
     /* Shader bind point/type */
     VkPipelineStageFlags stage;
@@ -204,20 +251,20 @@ typedef struct FFVulkanShader {
     VkPipelineLayout pipeline_layout;
 
     /* Push consts */
-    VkPushConstantRange *push_consts;
+    VkPushConstantRange push_consts[FF_VK_MAX_PUSH_CONSTS];
     int push_consts_num;
 
     /* Descriptor sets */
-    FFVulkanDescriptorSet *desc_set;
+    FFVulkanDescriptorSet desc_set[FF_VK_MAX_DESCRIPTOR_SETS];
     int nb_descriptor_sets;
 
     /* Descriptor buffer */
-    VkDescriptorSetLayout *desc_layout;
-    uint32_t *bound_buffer_indices;
+    VkDescriptorSetLayout desc_layout[FF_VK_MAX_DESCRIPTOR_SETS];
+    uint32_t bound_buffer_indices[FF_VK_MAX_DESCRIPTOR_SETS];
 
     /* Descriptor pool */
     int use_push;
-    VkDescriptorPoolSize *desc_pool_size;
+    VkDescriptorPoolSize desc_pool_size[FF_VK_MAX_DESCRIPTOR_TYPES];
     int nb_desc_pool_size;
 } FFVulkanShader;
 
@@ -233,8 +280,8 @@ typedef struct FFVulkanShaderData {
     int nb_descriptor_sets;
 
     /* Descriptor buffer */
-    FFVulkanDescriptorSetData *desc_set_buf;
-    VkDescriptorBufferBindingInfoEXT *desc_bind;
+    FFVulkanDescriptorSetData desc_set_buf[FF_VK_MAX_DESCRIPTOR_SETS];
+    VkDescriptorBufferBindingInfoEXT desc_bind[FF_VK_MAX_DESCRIPTOR_SETS];
 
     /* Descriptor pools */
     VkDescriptorSet *desc_sets;
@@ -245,7 +292,7 @@ typedef struct FFVkExecPool {
     FFVkExecContext *contexts;
     atomic_uint_least64_t idx;
 
-    VkCommandPool cmd_buf_pool;
+    VkCommandPool *cmd_buf_pools;
     VkCommandBuffer *cmd_bufs;
     int pool_size;
 
@@ -259,7 +306,7 @@ typedef struct FFVkExecPool {
     size_t qd_size;
 
     /* Registered shaders' data */
-    FFVulkanShaderData *reg_shd;
+    FFVulkanShaderData reg_shd[FF_VK_MAX_SHADERS];
     int nb_reg_shd;
 } FFVkExecPool;
 
@@ -277,11 +324,17 @@ typedef struct FFVulkanContext {
     VkPhysicalDeviceDescriptorBufferPropertiesEXT desc_buf_props;
     VkPhysicalDeviceSubgroupSizeControlProperties subgroup_props;
     VkPhysicalDeviceCooperativeMatrixPropertiesKHR coop_matrix_props;
+    VkPhysicalDevicePushDescriptorPropertiesKHR push_desc_props;
     VkPhysicalDeviceOpticalFlowPropertiesNV optical_flow_props;
+#ifdef VK_EXT_shader_long_vector
+    VkPhysicalDeviceShaderLongVectorPropertiesEXT long_vector_props;
+#endif
     VkQueueFamilyQueryResultStatusPropertiesKHR *query_props;
     VkQueueFamilyVideoPropertiesKHR *video_props;
     VkQueueFamilyProperties2 *qf_props;
     int tot_nb_qfs;
+    VkPhysicalDeviceHostImageCopyPropertiesEXT host_image_props;
+    VkImageLayout *host_image_copy_layouts;
 
     VkCooperativeMatrixPropertiesKHR *coop_mat_props;
     uint32_t coop_mat_props_nb;
@@ -289,6 +342,8 @@ typedef struct FFVulkanContext {
     VkPhysicalDeviceShaderAtomicFloatFeaturesEXT atomic_float_feats;
     VkPhysicalDeviceVulkan12Features feats_12;
     VkPhysicalDeviceFeatures2 feats;
+
+    VkMemoryPropertyFlagBits host_cached_flag;
 
     AVBufferRef           *device_ref;
     AVHWDeviceContext     *device;
@@ -340,6 +395,15 @@ static inline void ff_vk_link_struct(void *chain, const void *in)
     out->pNext = (void *)in;
 }
 
+#define FF_VK_STRUCT_EXT(CTX, BASE, STRUCT_P, EXT_FLAG, TYPE) \
+    do {                                                      \
+        if ((EXT_FLAG == FF_VK_EXT_NO_FLAG) ||                \
+            ((CTX)->extensions & EXT_FLAG)) {                 \
+            (STRUCT_P)->sType = TYPE;                         \
+            ff_vk_link_struct(BASE, STRUCT_P);                \
+        }                                                     \
+    } while (0)
+
 /* Identity mapping - r = r, b = b, g = g, a = a */
 extern const VkComponentMapping ff_comp_identity_map;
 
@@ -357,9 +421,21 @@ int ff_vk_init(FFVulkanContext *s, void *log_parent,
 const char *ff_vk_ret2str(VkResult res);
 
 /**
+ * Map between usage and features.
+ */
+VkImageUsageFlags ff_vk_map_feats_to_usage(VkFormatFeatureFlagBits2 feats);
+VkFormatFeatureFlagBits2 ff_vk_map_usage_to_feats(VkImageUsageFlags usage);
+
+/**
  * Returns 1 if pixfmt is a usable RGB format.
  */
 int ff_vk_mt_is_np_rgb(enum AVPixelFormat pix_fmt);
+
+/**
+ * Since storage images may not be swizzled, we have to do this in the
+ * shader itself. This fills in a lookup table to do it.
+ */
+void ff_vk_set_perm(enum AVPixelFormat pix_fmt, int lut[4], int inv);
 
 /**
  * Get the aspect flag for a plane from an image.
@@ -440,6 +516,9 @@ void ff_vk_exec_wait(FFVulkanContext *s, FFVkExecContext *e);
  */
 int ff_vk_exec_add_dep_buf(FFVulkanContext *s, FFVkExecContext *e,
                            AVBufferRef **deps, int nb_deps, int ref);
+int ff_vk_exec_add_dep_wait_sem(FFVulkanContext *s, FFVkExecContext *e,
+                                VkSemaphore sem, uint64_t val,
+                                VkPipelineStageFlagBits2 stage);
 int ff_vk_exec_add_dep_bool_sem(FFVulkanContext *s, FFVkExecContext *e,
                                 VkSemaphore *sem, int nb,
                                 VkPipelineStageFlagBits2 stage,
@@ -457,18 +536,44 @@ int ff_vk_exec_mirror_sem_value(FFVulkanContext *s, FFVkExecContext *e,
 void ff_vk_exec_discard_deps(FFVulkanContext *s, FFVkExecContext *e);
 
 /**
+ * Create a single imageview for a given plane.
+ */
+int ff_vk_create_imageview(FFVulkanContext *s,
+                           VkImageView *img_view, VkImageAspectFlags *aspect,
+                           AVFrame *f, int plane, enum FFVkShaderRepFormat rep_fmt);
+
+/**
  * Create an imageview and add it as a dependency to an execution.
  */
 int ff_vk_create_imageviews(FFVulkanContext *s, FFVkExecContext *e,
                             VkImageView views[AV_NUM_DATA_POINTERS],
                             AVFrame *f, enum FFVkShaderRepFormat rep_fmt);
 
+#define ff_vk_buf_barrier(dst, vkb, s_stage, s_access, s_access2,              \
+                          d_stage, d_access, d_access2, offs, bsz)             \
+    do {                                                                       \
+        dst = (VkBufferMemoryBarrier2) {                                       \
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,                \
+            .srcStageMask = VK_PIPELINE_STAGE_2_ ##s_stage,                    \
+            .srcAccessMask = VK_ACCESS_2_ ##s_access |                         \
+                             VK_ACCESS_2_ ##s_access2,                         \
+            .dstStageMask = VK_PIPELINE_STAGE_2_ ##d_stage,                    \
+            .dstAccessMask = VK_ACCESS_2_ ##d_access |                         \
+                             VK_ACCESS_2_ ##d_access2,                         \
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,                    \
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,                    \
+            .buffer = vkb->buf,                                                \
+            .offset = offs,                                                    \
+            .size = bsz                                                        \
+        };                                                                     \
+    } while(0)
+
 void ff_vk_frame_barrier(FFVulkanContext *s, FFVkExecContext *e,
                          AVFrame *pic, VkImageMemoryBarrier2 *bar, int *nb_bar,
-                         VkPipelineStageFlags src_stage,
-                         VkPipelineStageFlags dst_stage,
-                         VkAccessFlagBits     new_access,
-                         VkImageLayout        new_layout,
+                         VkPipelineStageFlags2 src_stage,
+                         VkPipelineStageFlags2 dst_stage,
+                         VkAccessFlagBits2     new_access,
+                         VkImageLayout         new_layout,
                          uint32_t             new_qf);
 
 /**
@@ -480,9 +585,13 @@ int ff_vk_alloc_mem(FFVulkanContext *s, VkMemoryRequirements *req,
 int ff_vk_create_buf(FFVulkanContext *s, FFVkBuffer *buf, size_t size,
                      void *pNext, void *alloc_pNext,
                      VkBufferUsageFlags usage, VkMemoryPropertyFlagBits flags);
-int ff_vk_create_avbuf(FFVulkanContext *s, AVBufferRef **ref, size_t size,
-                       void *pNext, void *alloc_pNext,
-                       VkBufferUsageFlags usage, VkMemoryPropertyFlagBits flags);
+
+/**
+ * Flush or invalidate a single buffer, with a given size and offset.
+ */
+int ff_vk_flush_buffer(FFVulkanContext *s, FFVkBuffer *buf,
+                       VkDeviceSize offset, VkDeviceSize mem_size,
+                       int flush);
 
 /**
  * Buffer management code.
@@ -515,6 +624,13 @@ int ff_vk_get_pooled_buffer(FFVulkanContext *ctx, AVBufferPool **buf_pool,
                             void *create_pNext, size_t size,
                             VkMemoryPropertyFlagBits mem_props);
 
+/** Maps a system RAM buffer into a Vulkan buffer.
+ * References the source buffer.
+ */
+int ff_vk_host_map_buffer(FFVulkanContext *s, AVBufferRef **dst,
+                          uint8_t *src_data, const AVBufferRef *src_buf,
+                          VkBufferUsageFlags usage);
+
 /**
  * Create a sampler.
  */
@@ -532,6 +648,15 @@ int ff_vk_shader_init(FFVulkanContext *s, FFVulkanShader *shd, const char *name,
                       uint32_t required_subgroup_size);
 
 /**
+ * Initialize a shader object.
+ * If spec is non-null, it must have been created with SPEC_LIST_CREATE().
+ * The IDs for the workgroup size must be 253, 254, 255.
+ */
+int ff_vk_shader_load(FFVulkanShader *shd,
+                      VkPipelineStageFlags stage, VkSpecializationInfo *spec,
+                      uint32_t wg_size[3], uint32_t required_subgroup_size);
+
+/**
  * Output the shader code as logging data, with a specific
  * priority.
  */
@@ -541,7 +666,7 @@ void ff_vk_shader_print(void *ctx, FFVulkanShader *shd, int prio);
  * Link a shader into an executable.
  */
 int ff_vk_shader_link(FFVulkanContext *s, FFVulkanShader *shd,
-                      uint8_t *spirv, size_t spirv_len,
+                      const char *spirv, size_t spirv_len,
                       const char *entrypoint);
 
 /**
@@ -554,7 +679,7 @@ int ff_vk_shader_add_push_const(FFVulkanShader *shd, int offset, int size,
  * Add descriptor to a shader. Must be called before shader init.
  */
 int ff_vk_shader_add_descriptor_set(FFVulkanContext *s, FFVulkanShader *shd,
-                                    FFVulkanDescriptorSetBinding *desc, int nb,
+                                    const FFVulkanDescriptorSetBinding *desc, int nb,
                                     int singular, int print_to_shader_only);
 
 /**
@@ -588,6 +713,14 @@ int ff_vk_shader_update_desc_buffer(FFVulkanContext *s, FFVkExecContext *e,
                                     int set, int bind, int elem,
                                     FFVkBuffer *buf, VkDeviceSize offset, VkDeviceSize len,
                                     VkFormat fmt);
+
+/**
+ * Sets an image descriptor for specified shader and binding.
+ */
+int ff_vk_shader_update_img(FFVulkanContext *s, FFVkExecContext *e,
+                            FFVulkanShader *shd, int set, int bind, int offs,
+                            VkImageView view, VkImageLayout layout,
+                            VkSampler sampler);
 
 /**
  * Update a descriptor in a buffer with an image array..

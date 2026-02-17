@@ -25,6 +25,7 @@
  */
 
 #include "parser.h"
+#include "parser_internal.h"
 #include "libavutil/bswap.h"
 
 typedef struct DNxUcParseContext {
@@ -81,8 +82,9 @@ static int dnxuc_parse(AVCodecParserContext *s,
     return next;
 }
 
-const AVCodecParser ff_dnxuc_parser = {
-    .codec_ids      = { AV_CODEC_ID_DNXUC },
+const FFCodecParser ff_dnxuc_parser = {
+    PARSER_CODEC_LIST(AV_CODEC_ID_DNXUC),
     .priv_data_size = sizeof(DNxUcParseContext),
-    .parser_parse   = dnxuc_parse,
+    .parse          = dnxuc_parse,
+    .close          = ff_parse_close,
 };

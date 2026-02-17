@@ -373,7 +373,7 @@ static int geq_query_formats(const AVFilterContext *ctx,
     };
     const enum AVPixelFormat *pix_fmts = geq->is_rgb ? rgb_pix_fmts : yuv_pix_fmts;
 
-    return ff_set_common_formats_from_list2(ctx, cfg_in, cfg_out, pix_fmts);
+    return ff_set_pixel_formats_from_list2(ctx, cfg_in, cfg_out, pix_fmts);
 }
 
 static int geq_config_props(AVFilterLink *inlink)
@@ -526,15 +526,15 @@ static const AVFilterPad geq_inputs[] = {
     },
 };
 
-const AVFilter ff_vf_geq = {
-    .name          = "geq",
-    .description   = NULL_IF_CONFIG_SMALL("Apply generic equation to each pixel."),
+const FFFilter ff_vf_geq = {
+    .p.name        = "geq",
+    .p.description = NULL_IF_CONFIG_SMALL("Apply generic equation to each pixel."),
+    .p.priv_class  = &geq_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(GEQContext),
     .init          = geq_init,
     .uninit        = geq_uninit,
     FILTER_INPUTS(geq_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_QUERY_FUNC2(geq_query_formats),
-    .priv_class    = &geq_class,
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
 };

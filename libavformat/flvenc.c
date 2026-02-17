@@ -160,7 +160,7 @@ static int get_audio_flags(AVFormatContext *s, AVCodecParameters *par)
     } else {
         switch (par->sample_rate) {
         case 48000:
-            // 48khz mp3 is stored with 44k1 samplerate identifer
+            // 48khz mp3 is stored with 44k1 samplerate identifier
             if (par->codec_id == AV_CODEC_ID_MP3) {
                 flags |= FLV_SAMPLERATE_44100HZ;
                 break;
@@ -807,6 +807,7 @@ static void flv_write_codec_header(AVFormatContext* s, AVCodecParameters* par, i
     if (par->codec_id == AV_CODEC_ID_AAC || par->codec_id == AV_CODEC_ID_H264
             || par->codec_id == AV_CODEC_ID_MPEG4 || par->codec_id == AV_CODEC_ID_HEVC
             || par->codec_id == AV_CODEC_ID_AV1 || par->codec_id == AV_CODEC_ID_VP9
+            || (par->codec_id == AV_CODEC_ID_MP3 && track_idx)
             || par->codec_id == AV_CODEC_ID_OPUS || par->codec_id == AV_CODEC_ID_FLAC
             || par->codec_id == AV_CODEC_ID_AC3 || par->codec_id == AV_CODEC_ID_EAC3) {
         int64_t pos;
@@ -881,8 +882,12 @@ static void flv_write_codec_header(AVFormatContext* s, AVCodecParameters* par, i
                 ff_isom_write_av1c(pb, par->extradata, par->extradata_size, 1);
             else if (par->codec_id == AV_CODEC_ID_VP9)
                 ff_isom_write_vpcc(s, pb, par->extradata, par->extradata_size, par);
-            else
+            else if (par->codec_id == AV_CODEC_ID_H264)
                 ff_isom_write_avcc(pb, par->extradata, par->extradata_size);
+            else if (par->codec_id == AV_CODEC_ID_MPEG4)
+                avio_write(pb, par->extradata, par->extradata_size);
+            else
+                av_assert0(0);
         }
         data_size = avio_tell(pb) - pos;
         avio_seek(pb, -data_size - 10, SEEK_CUR);
@@ -1265,9 +1270,9 @@ static int flv_write_packet(AVFormatContext *s, AVPacket *pkt)
 
     ts = pkt->dts;
 
-    if (s->event_flags & AVSTREAM_EVENT_FLAG_METADATA_UPDATED) {
+    if (s->event_flags & AVFMT_EVENT_FLAG_METADATA_UPDATED) {
         write_metadata(s, ts);
-        s->event_flags &= ~AVSTREAM_EVENT_FLAG_METADATA_UPDATED;
+        s->event_flags &= ~AVFMT_EVENT_FLAG_METADATA_UPDATED;
     }
 
     avio_write_marker(pb, av_rescale(ts, AV_TIME_BASE, 1000),

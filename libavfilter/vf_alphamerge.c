@@ -49,6 +49,7 @@ typedef struct AlphaMergeContext {
 static int do_alphamerge(FFFrameSync *fs)
 {
     AVFilterContext *ctx = fs->parent;
+    AVFilterLink *outlink = ctx->outputs[0];
     AlphaMergeContext *s = ctx->priv;
     AVFrame *main_buf, *alpha_buf;
     int ret;
@@ -56,6 +57,7 @@ static int do_alphamerge(FFFrameSync *fs)
     ret = ff_framesync_dualinput_get_writable(fs, &main_buf, &alpha_buf);
     if (ret < 0)
         return ret;
+    main_buf->alpha_mode = outlink->alpha_mode;
     if (!alpha_buf)
         return ff_filter_frame(ctx->outputs[0], main_buf);
 
@@ -109,12 +111,17 @@ static int query_formats(const AVFilterContext *ctx,
     static const enum AVPixelFormat alpha_fmts[] = { AV_PIX_FMT_GRAY8, AV_PIX_FMT_NONE };
     int ret;
 
-    ret = ff_formats_ref(ff_make_format_list(alpha_fmts),
+    ret = ff_formats_ref(ff_make_pixel_format_list(alpha_fmts),
                          &cfg_in[1]->formats);
     if (ret < 0)
         return ret;
 
-    ret = ff_set_common_formats_from_list2(ctx, cfg_in, cfg_out, main_fmts);
+    ret = ff_set_pixel_formats_from_list2(ctx, cfg_in, cfg_out, main_fmts);
+    if (ret < 0)
+        return ret;
+
+    ret = ff_formats_ref(ff_make_formats_list_singleton(AVALPHA_MODE_STRAIGHT),
+                         &cfg_out[0]->alpha_modes);
     if (ret < 0)
         return ret;
 
@@ -198,18 +205,18 @@ static const AVOption alphamerge_options[] = {
 
 FRAMESYNC_DEFINE_CLASS(alphamerge, AlphaMergeContext, fs);
 
-const AVFilter ff_vf_alphamerge = {
-    .name           = "alphamerge",
-    .description    = NULL_IF_CONFIG_SMALL("Copy the luma value of the second "
+const FFFilter ff_vf_alphamerge = {
+    .p.name         = "alphamerge",
+    .p.description  = NULL_IF_CONFIG_SMALL("Copy the luma value of the second "
                       "input into the alpha channel of the first input."),
+    .p.priv_class   = &alphamerge_class,
+    .p.flags        = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL,
     .preinit        = alphamerge_framesync_preinit,
     .priv_size      = sizeof(AlphaMergeContext),
-    .priv_class     = &alphamerge_class,
     .init           = init,
     FILTER_INPUTS(alphamerge_inputs),
     FILTER_OUTPUTS(alphamerge_outputs),
     FILTER_QUERY_FUNC2(query_formats),
     .uninit         = uninit,
     .activate       = activate,
-    .flags          = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL,
 };

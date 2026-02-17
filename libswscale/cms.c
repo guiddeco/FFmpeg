@@ -29,9 +29,9 @@
 #include "cms.h"
 #include "csputils.h"
 #include "libswscale/swscale.h"
-#include "utils.h"
+#include "format.h"
 
-bool sws_color_map_noop(const SwsColorMap *map)
+bool ff_sws_color_map_noop(const SwsColorMap *map)
 {
     /* If the encoding space is different, we must go through a conversion */
     if (map->src.prim != map->dst.prim || map->src.trc != map->dst.trc)
@@ -400,7 +400,7 @@ static void st2094_pick_knee(float src_max, float src_min, float src_avg,
     adapted = fmixf(dst_min, dst_max, target);
 
     /**
-     * Choose the destnation knee by picking the perceptual adaptation point
+     * Choose the destination knee by picking the perceptual adaptation point
      * between the source knee and the desired target. This moves the knee
      * point, on the vertical axis, closer to the 1:1 (neutral) line.
      *
@@ -676,14 +676,14 @@ static void generate_slice(void *priv, int jobnr, int threadnr, int nb_jobs,
     }
 }
 
-int sws_color_map_generate_static(v3u16_t *lut, int size, const SwsColorMap *map)
+int ff_sws_color_map_generate_static(v3u16_t *lut, int size, const SwsColorMap *map)
 {
-    return sws_color_map_generate_dynamic(lut, NULL, size, 1, 1, map);
+    return ff_sws_color_map_generate_dynamic(lut, NULL, size, 1, 1, map);
 }
 
-int sws_color_map_generate_dynamic(v3u16_t *input, v3u16_t *output,
-                                   int size_input, int size_I, int size_PT,
-                                   const SwsColorMap *map)
+int ff_sws_color_map_generate_dynamic(v3u16_t *input, v3u16_t *output,
+                                      int size_input, int size_I, int size_PT,
+                                      const SwsColorMap *map)
 {
     AVSliceThread *slicethread;
     int ret, num_slices;
@@ -740,7 +740,7 @@ int sws_color_map_generate_dynamic(v3u16_t *input, v3u16_t *output,
     return 0;
 }
 
-void sws_tone_map_generate(v2u16_t *lut, int size, const SwsColorMap *map)
+void ff_sws_tone_map_generate(v2u16_t *lut, int size, const SwsColorMap *map)
 {
     CmsCtx ctx = {
         .map = *map,

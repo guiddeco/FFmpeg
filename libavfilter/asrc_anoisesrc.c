@@ -94,7 +94,7 @@ static av_cold int query_formats(const AVFilterContext *ctx,
         AV_SAMPLE_FMT_DBL,
         AV_SAMPLE_FMT_NONE
     };
-    int ret = ff_set_common_formats_from_list2(ctx, cfg_in, cfg_out, sample_fmts);
+    int ret = ff_set_sample_formats_from_list2(ctx, cfg_in, cfg_out, sample_fmts);
     if (ret < 0)
         return ret;
 
@@ -239,13 +239,12 @@ static const AVFilterPad anoisesrc_outputs[] = {
     },
 };
 
-const AVFilter ff_asrc_anoisesrc = {
-    .name          = "anoisesrc",
-    .description   = NULL_IF_CONFIG_SMALL("Generate a noise audio signal."),
+const FFFilter ff_asrc_anoisesrc = {
+    .p.name        = "anoisesrc",
+    .p.description = NULL_IF_CONFIG_SMALL("Generate a noise audio signal."),
+    .p.priv_class  = &anoisesrc_class,
     .priv_size     = sizeof(ANoiseSrcContext),
-    .inputs        = NULL,
     .activate      = activate,
     FILTER_OUTPUTS(anoisesrc_outputs),
     FILTER_QUERY_FUNC2(query_formats),
-    .priv_class    = &anoisesrc_class,
 };

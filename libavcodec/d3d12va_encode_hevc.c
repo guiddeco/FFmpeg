@@ -238,7 +238,6 @@ static int d3d12va_encode_hevc_init_sequence_params(AVCodecContext *avctx)
     AVD3D12VAFramesContext   *hwctx = base_ctx->input_frames->hwctx;
     H265RawSPS                *sps  = &priv->units.raw_sps;
     H265RawPPS                *pps  = &priv->units.raw_pps;
-    H265RawVUI                *vui  = &sps->vui;
     D3D12_VIDEO_ENCODER_PROFILE_HEVC profile = D3D12_VIDEO_ENCODER_PROFILE_HEVC_MAIN;
     D3D12_VIDEO_ENCODER_LEVEL_TIER_CONSTRAINTS_HEVC level = { 0 };
     const AVPixFmtDescriptor *desc;
@@ -251,7 +250,7 @@ static int d3d12va_encode_hevc_init_sequence_params(AVCodecContext *avctx)
         .Codec                            = D3D12_VIDEO_ENCODER_CODEC_HEVC,
         .InputFormat                      = hwctx->format,
         .RateControl                      = ctx->rc,
-        .IntraRefresh                     = D3D12_VIDEO_ENCODER_INTRA_REFRESH_MODE_NONE,
+        .IntraRefresh                     = ctx->intra_refresh.Mode,
         .SubregionFrameEncoding           = D3D12_VIDEO_ENCODER_FRAME_SUBREGION_LAYOUT_MODE_FULL_FRAME,
         .ResolutionsListCount             = 1,
         .pResolutionList                  = &ctx->resolution,
@@ -280,9 +279,31 @@ static int d3d12va_encode_hevc_init_sequence_params(AVCodecContext *avctx)
     }
 
     if (support.SupportFlags & D3D12_VIDEO_ENCODER_SUPPORT_FLAG_RECONSTRUCTED_FRAMES_REQUIRE_TEXTURE_ARRAYS) {
-        av_log(avctx, AV_LOG_ERROR, "D3D12 video encode on this device requires texture array support, "
-               "but it's not implemented.\n");
-        return AVERROR_PATCHWELCOME;
+        ctx->is_texture_array = 1;
+        av_log(avctx, AV_LOG_DEBUG, "D3D12 video encode on this device uses texture array mode.\n");
+    }
+
+    // Check if the configuration with DELTA_QP is supported
+    if (support.SupportFlags & D3D12_VIDEO_ENCODER_SUPPORT_FLAG_RATE_CONTROL_DELTA_QP_AVAILABLE) {
+        base_ctx->roi_allowed = 1;
+        // Store the QP map region size from resolution limits
+        ctx->qp_map_region_size = ctx->res_limits.QPMapRegionPixelsSize;
+        av_log(avctx, AV_LOG_DEBUG, "ROI encoding is supported via delta QP "
+               "(QP map region size: %d pixels).\n", ctx->qp_map_region_size);
+    } else {
+        base_ctx->roi_allowed = 0;
+        av_log(avctx, AV_LOG_DEBUG, "ROI encoding not supported by hardware for current rate control mode \n");
+    }
+
+    // Check motion estimation precision mode support
+    if (ctx->me_precision != D3D12_VIDEO_ENCODER_MOTION_ESTIMATION_PRECISION_MODE_MAXIMUM) {
+        if (!(support.SupportFlags & D3D12_VIDEO_ENCODER_SUPPORT_FLAG_MOTION_ESTIMATION_PRECISION_MODE_LIMIT_AVAILABLE)) {
+            av_log(avctx, AV_LOG_ERROR, "Hardware does not support motion estimation "
+                "precision mode limits.\n");
+            return AVERROR(ENOTSUP);
+        }
+        av_log(avctx, AV_LOG_VERBOSE, "Hardware supports motion estimation "
+            "precision mode limits.\n");
     }
 
     desc = av_pix_fmt_desc_get(base_ctx->input_frames->sw_format);
@@ -540,6 +561,7 @@ static void d3d12va_encode_hevc_free_picture_params(D3D12VAEncodePicture *pic)
 static int d3d12va_encode_hevc_init_picture_params(AVCodecContext *avctx,
                                                    FFHWBaseEncodePicture *base_pic)
 {
+    FFHWBaseEncodeContext                           *base_ctx = avctx->priv_data;
     D3D12VAEncodePicture                                 *pic = base_pic->priv;
     D3D12VAEncodeHEVCPicture                            *hpic = base_pic->codec_priv;
     FFHWBaseEncodePicture                               *prev = base_pic->prev;
@@ -633,6 +655,12 @@ static int d3d12va_encode_hevc_init_picture_params(AVCodecContext *avctx,
     pic->pic_ctl.pHEVCPicData->ReferenceFramesReconPictureDescriptorsCount = idx;
     pic->pic_ctl.pHEVCPicData->pReferenceFramesReconPictureDescriptors = pd;
 
+    // Process ROI side data if present and supported
+    if (base_ctx->roi_allowed && pic->qp_map && pic->qp_map_size > 0) {
+        pic->pic_ctl.pHEVCPicData->QPMapValuesCount  = pic->qp_map_size;
+        pic->pic_ctl.pHEVCPicData->pRateControlQPMap = (INT8 *)pic->qp_map;
+    }
+
     return 0;
 }
 
@@ -673,10 +701,10 @@ static int d3d12va_encode_hevc_init(AVCodecContext *avctx)
 
     if (avctx->profile == AV_PROFILE_UNKNOWN)
         avctx->profile = priv->profile;
-    if (avctx->level == FF_LEVEL_UNKNOWN)
+    if (avctx->level == AV_LEVEL_UNKNOWN)
         avctx->level = priv->level;
 
-    if (avctx->level != FF_LEVEL_UNKNOWN && avctx->level & ~0xff) {
+    if (avctx->level != AV_LEVEL_UNKNOWN && avctx->level & ~0xff) {
         av_log(avctx, AV_LOG_ERROR, "Invalid level %d: must fit "
                "in 8-bit unsigned integer.\n", avctx->level);
         return AVERROR(EINVAL);
@@ -706,6 +734,7 @@ static int d3d12va_encode_hevc_close(AVCodecContext *avctx)
 #define FLAGS (AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM)
 static const AVOption d3d12va_encode_hevc_options[] = {
     HW_BASE_ENCODE_COMMON_OPTIONS,
+    D3D12VA_ENCODE_COMMON_OPTIONS,
     D3D12VA_ENCODE_RC_OPTIONS,
 
     { "qp", "Constant QP (for P-frames; scaled by qfactor/qoffset for I/B)",
@@ -731,7 +760,7 @@ static const AVOption d3d12va_encode_hevc_options[] = {
 
     { "level", "Set level (general_level_idc)",
       OFFSET(level), AV_OPT_TYPE_INT,
-      { .i64 = FF_LEVEL_UNKNOWN }, FF_LEVEL_UNKNOWN, 0xff, FLAGS, "level" },
+      { .i64 = AV_LEVEL_UNKNOWN }, AV_LEVEL_UNKNOWN, 0xff, FLAGS, "level" },
 
 #define LEVEL(name, value) name, NULL, 0, AV_OPT_TYPE_CONST, \
       { .i64 = value }, 0, 0, FLAGS, "level"
@@ -763,6 +792,7 @@ static const FFCodecDefault d3d12va_encode_hevc_defaults[] = {
     { "b_qoffset",      "0"   },
     { "qmin",           "-1"  },
     { "qmax",           "-1"  },
+    { "refs",           "0"   },
     { NULL },
 };
 
@@ -788,10 +818,7 @@ const FFCodec ff_hevc_d3d12va_encoder = {
     .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE |
                       FF_CODEC_CAP_INIT_CLEANUP,
     .defaults       = d3d12va_encode_hevc_defaults,
-    .p.pix_fmts = (const enum AVPixelFormat[]) {
-        AV_PIX_FMT_D3D12,
-        AV_PIX_FMT_NONE,
-    },
+    CODEC_PIXFMTS(AV_PIX_FMT_D3D12),
     .hw_configs     = ff_d3d12va_encode_hw_configs,
     .p.wrapper_name = "d3d12va",
 };

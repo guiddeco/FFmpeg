@@ -165,12 +165,12 @@ static int query_formats(const AVFilterContext *ctx,
     int ret;
 
     /* set input audio formats */
-    formats = ff_make_format_list(sample_fmts);
+    formats = ff_make_sample_format_list(sample_fmts);
     if ((ret = ff_formats_ref(formats, &cfg_in[0]->formats)) < 0)
         return ret;
 
     /* set output video format */
-    formats = ff_make_format_list(pix_fmts);
+    formats = ff_make_pixel_format_list(pix_fmts);
     if ((ret = ff_formats_ref(formats, &cfg_out[0]->formats)) < 0)
         return ret;
 
@@ -796,9 +796,10 @@ static const AVFilterPad showwaves_outputs[] = {
     },
 };
 
-const AVFilter ff_avf_showwaves = {
-    .name          = "showwaves",
-    .description   = NULL_IF_CONFIG_SMALL("Convert input audio to a video output."),
+const FFFilter ff_avf_showwaves = {
+    .p.name        = "showwaves",
+    .p.description = NULL_IF_CONFIG_SMALL("Convert input audio to a video output."),
+    .p.priv_class  = &showwaves_class,
     .init          = init,
     .uninit        = uninit,
     .priv_size     = sizeof(ShowWavesContext),
@@ -806,7 +807,6 @@ const AVFilter ff_avf_showwaves = {
     .activate      = activate,
     FILTER_OUTPUTS(showwaves_outputs),
     FILTER_QUERY_FUNC2(query_formats),
-    .priv_class    = &showwaves_class,
 };
 
 #endif // CONFIG_SHOWWAVES_FILTER
@@ -908,16 +908,16 @@ static const AVFilterPad showwavespic_outputs[] = {
     },
 };
 
-const AVFilter ff_avf_showwavespic = {
-    .name          = "showwavespic",
-    .description   = NULL_IF_CONFIG_SMALL("Convert input audio to a video output single picture."),
+const FFFilter ff_avf_showwavespic = {
+    .p.name        = "showwavespic",
+    .p.description = NULL_IF_CONFIG_SMALL("Convert input audio to a video output single picture."),
+    .p.priv_class  = &showwavespic_class,
     .init          = init,
     .uninit        = uninit,
     .priv_size     = sizeof(ShowWavesContext),
     FILTER_INPUTS(showwavespic_inputs),
     FILTER_OUTPUTS(showwavespic_outputs),
     FILTER_QUERY_FUNC2(query_formats),
-    .priv_class    = &showwavespic_class,
 };
 
 #endif // CONFIG_SHOWWAVESPIC_FILTER

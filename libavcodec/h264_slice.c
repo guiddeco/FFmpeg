@@ -191,6 +191,13 @@ static int alloc_picture(H264Context *h, H264Picture *pic)
 
     av_assert0(!pic->f->data[0]);
 
+    if (h->sei.common.lcevc.info) {
+        HEVCSEILCEVC *lcevc = &h->sei.common.lcevc;
+        ret = ff_frame_new_side_data_from_buf(h->avctx, pic->f, AV_FRAME_DATA_LCEVC, &lcevc->info);
+        if (ret < 0)
+            return ret;
+    }
+
     pic->tf.f = pic->f;
     ret = ff_thread_get_ext_buffer(h->avctx, &pic->tf,
                                    pic->reference ? AV_GET_BUFFER_FLAG_REF : 0);
@@ -808,6 +815,9 @@ static enum AVPixelFormat get_pixel_format(H264Context *h, int force_callback)
 #if CONFIG_H264_VULKAN_HWACCEL
         *fmt++ = AV_PIX_FMT_VULKAN;
 #endif
+#if CONFIG_H264_NVDEC_HWACCEL
+        *fmt++ = AV_PIX_FMT_CUDA;
+#endif
         if (CHROMA444(h)) {
             if (h->avctx->colorspace == AVCOL_SPC_RGB) {
                 *fmt++ = AV_PIX_FMT_GBRP10;
@@ -1140,7 +1150,7 @@ static int h264_init_ps(H264Context *h, const H264SliceContext *sl, int first_sl
         if (flush_changes)
             ff_h264_flush_change(h);
 
-        if ((ret = get_pixel_format(h, 1)) < 0)
+        if ((ret = get_pixel_format(h, must_reinit || needs_reinit)) < 0)
             return ret;
         h->avctx->pix_fmt = ret;
 
@@ -2097,7 +2107,7 @@ int ff_h264_queue_decode_slice(H264Context *h, const H2645NAL *nal)
                 if (ret < 0)
                     return ret;
             } else if (h->cur_pic_ptr && !FIELD_PICTURE(h) && !h->first_field && h->nal_unit_type  == H264_NAL_IDR_SLICE) {
-                av_log(h, AV_LOG_WARNING, "Broken frame packetizing\n");
+                av_log(h->avctx, AV_LOG_WARNING, "Broken frame packetizing\n");
                 ret = ff_h264_field_end(h, h->slice_ctx, 1);
                 ff_thread_report_progress(&h->cur_pic_ptr->tf, INT_MAX, 0);
                 ff_thread_report_progress(&h->cur_pic_ptr->tf, INT_MAX, 1);
@@ -2629,10 +2639,10 @@ static int decode_slice(struct AVCodecContext *avctx, void *arg)
                 goto finish;
             }
             if (sl->cabac.bytestream > sl->cabac.bytestream_end + 2 )
-                av_log(h->avctx, AV_LOG_DEBUG, "bytestream overread %"PTRDIFF_SPECIFIER"\n", sl->cabac.bytestream_end - sl->cabac.bytestream);
+                av_log(h->avctx, AV_LOG_DEBUG, "bytestream overread %td\n", sl->cabac.bytestream_end - sl->cabac.bytestream);
             if (ret < 0 || sl->cabac.bytestream > sl->cabac.bytestream_end + 4) {
                 av_log(h->avctx, AV_LOG_ERROR,
-                       "error while decoding MB %d %d, bytestream %"PTRDIFF_SPECIFIER"\n",
+                       "error while decoding MB %d %d, bytestream %td\n",
                        sl->mb_x, sl->mb_y,
                        sl->cabac.bytestream_end - sl->cabac.bytestream);
                 er_add_slice(sl, sl->resync_mb_x, sl->resync_mb_y, sl->mb_x,

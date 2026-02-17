@@ -278,7 +278,7 @@ static int query_formats(const AVFilterContext *ctx,
     if (ret < 0)
         return ret;
 
-    ret = ff_set_common_formats_from_list2(ctx, cfg_in, cfg_out, formats);
+    ret = ff_set_sample_formats_from_list2(ctx, cfg_in, cfg_out, formats);
     if (ret < 0)
         return ret;
 
@@ -350,15 +350,14 @@ static const AVFilterPad flite_outputs[] = {
     },
 };
 
-const AVFilter ff_asrc_flite = {
-    .name          = "flite",
-    .description   = NULL_IF_CONFIG_SMALL("Synthesize voice from text using libflite."),
+const FFFilter ff_asrc_flite = {
+    .p.name        = "flite",
+    .p.description = NULL_IF_CONFIG_SMALL("Synthesize voice from text using libflite."),
+    .p.priv_class  = &flite_class,
     .init          = init,
     .uninit        = uninit,
     .priv_size     = sizeof(FliteContext),
     .activate      = activate,
-    .inputs        = NULL,
     FILTER_OUTPUTS(flite_outputs),
     FILTER_QUERY_FUNC2(query_formats),
-    .priv_class    = &flite_class,
 };

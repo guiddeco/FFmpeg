@@ -688,6 +688,11 @@ static av_cold int omx_encode_init(AVCodecContext *avctx)
             buffer = get_buffer(&s->output_mutex, &s->output_cond,
                                 &s->num_done_out_buffers, s->done_out_buffers, 1);
             if (buffer->nFlags & OMX_BUFFERFLAG_CODECCONFIG) {
+                if (buffer->nFilledLen > INT32_MAX - AV_INPUT_BUFFER_PADDING_SIZE - avctx->extradata_size) {
+                    ret = AVERROR(ENOMEM);
+                    goto fail;
+                }
+
                 if ((ret = av_reallocp(&avctx->extradata, avctx->extradata_size + buffer->nFilledLen + AV_INPUT_BUFFER_PADDING_SIZE)) < 0) {
                     avctx->extradata_size = 0;
                     goto fail;
@@ -951,7 +956,7 @@ const FFCodec ff_mpeg4_omx_encoder = {
     .init             = omx_encode_init,
     FF_CODEC_ENCODE_CB(omx_encode_frame),
     .close            = omx_encode_end,
-    .p.pix_fmts       = omx_encoder_pix_fmts,
+    CODEC_PIXFMTS_ARRAY(omx_encoder_pix_fmts),
     .color_ranges     = AVCOL_RANGE_MPEG,
     .p.capabilities   = AV_CODEC_CAP_DELAY,
     .caps_internal    = FF_CODEC_CAP_INIT_CLEANUP,
@@ -973,7 +978,7 @@ const FFCodec ff_h264_omx_encoder = {
     .init             = omx_encode_init,
     FF_CODEC_ENCODE_CB(omx_encode_frame),
     .close            = omx_encode_end,
-    .p.pix_fmts       = omx_encoder_pix_fmts,
+    CODEC_PIXFMTS_ARRAY(omx_encoder_pix_fmts),
     .color_ranges     = AVCOL_RANGE_MPEG, /* FIXME: implement tagging */
     .p.capabilities   = AV_CODEC_CAP_DELAY,
     .caps_internal    = FF_CODEC_CAP_INIT_CLEANUP,

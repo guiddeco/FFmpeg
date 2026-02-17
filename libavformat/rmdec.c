@@ -188,8 +188,9 @@ static int rm_read_audio_stream_info(AVFormatContext *s, AVIOContext *pb,
         st->codecpar->ch_layout.nb_channels = avio_rb16(pb);
         if (version == 5) {
             ast->deint_id = avio_rl32(pb);
-            if (avio_read(pb, buf, 4) != 4)
-                return AVERROR_INVALIDDATA;
+            ret = ffio_read_size(pb, buf, 4);
+            if (ret < 0)
+                return ret;
             buf[4] = 0;
         } else {
             AV_WL32(buf, 0);
@@ -568,7 +569,7 @@ static int rm_read_header(AVFormatContext *s)
         /* very old .ra format */
         return rm_read_header_old(s);
     } else if (tag != MKTAG('.', 'R', 'M', 'F') && tag != MKTAG('.', 'R', 'M', 'P')) {
-        return AVERROR(EIO);
+        return AVERROR_INVALIDDATA;
     }
 
     tag_size = avio_rb32(pb);
@@ -816,10 +817,11 @@ static int rm_assemble_video_frame(AVFormatContext *s, AVIOContext *pb,
         pkt->data[0] = 0;
         AV_WL32(pkt->data + 1, 1);
         AV_WL32(pkt->data + 5, 0);
-        if ((ret = avio_read(pb, pkt->data + 9, len)) != len) {
+        ret = ffio_read_size(pb, pkt->data + 9, len);
+        if (ret < 0) {
             av_packet_unref(pkt);
             av_log(s, AV_LOG_ERROR, "Failed to read %d bytes\n", len);
-            return ret < 0 ? ret : AVERROR(EIO);
+            return ret;
         }
         return 0;
     }
@@ -856,8 +858,9 @@ static int rm_assemble_video_frame(AVFormatContext *s, AVIOContext *pb,
         av_log(s, AV_LOG_ERROR, "outside videobufsize\n");
         return 1;
     }
-    if (avio_read(pb, vst->pkt.data + vst->videobufpos, len) != len)
-        return AVERROR(EIO);
+    ret = ffio_read_size(pb, vst->pkt.data + vst->videobufpos, len);
+    if (ret < 0)
+        return ret;
     vst->videobufpos += len;
     rm->remaining_len-= len;
 
@@ -1061,7 +1064,7 @@ static int rm_read_packet(AVFormatContext *s, AVPacket *pkt)
             if (avio_feof(s->pb))
                 return AVERROR_EOF;
             if (len <= 0)
-                return AVERROR(EIO);
+                return AVERROR_INVALIDDATA;
 
             res = ff_rm_parse_packet (s, s->pb, st, st->priv_data, len, pkt,
                                       &seq, flags, timestamp);
@@ -1407,7 +1410,7 @@ static int ivr_read_packet(AVFormatContext *s, AVPacket *pkt)
                 }
             } else {
                 av_log(s, AV_LOG_ERROR, "Unsupported opcode=%d at %"PRIX64"\n", opcode, avio_tell(pb) - 1);
-                return AVERROR(EIO);
+                return AVERROR_INVALIDDATA;
             }
         }
 

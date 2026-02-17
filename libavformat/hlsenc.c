@@ -44,13 +44,11 @@
 
 #include "avformat.h"
 #include "avio_internal.h"
-#include "avc.h"
 #if CONFIG_HTTP_PROTOCOL
 #include "http.h"
 #endif
 #include "hlsplaylist.h"
 #include "internal.h"
-#include "nal.h"
 #include "mux.h"
 #include "os_support.h"
 #include "url.h"
@@ -352,92 +350,18 @@ static void write_codec_attr(AVStream *st, VariantStream *vs)
 {
     int codec_strlen = strlen(vs->codec_attr);
     char attr[32];
+    AVBPrint buffer;
 
     if (st->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE)
         return;
     if (vs->attr_status == CODEC_ATTRIBUTE_WILL_NOT_BE_WRITTEN)
         return;
 
-    if (st->codecpar->codec_id == AV_CODEC_ID_H264) {
-        uint8_t *data = st->codecpar->extradata;
-        if (data) {
-            const uint8_t *p;
-
-            if (AV_RB32(data) == 0x01 && (data[4] & 0x1F) == 7)
-                p = &data[5];
-            else if (AV_RB24(data) == 0x01 && (data[3] & 0x1F) == 7)
-                p = &data[4];
-            else if (data[0] == 0x01)  /* avcC */
-                p = &data[1];
-            else
-                goto fail;
-            snprintf(attr, sizeof(attr),
-                     "avc1.%02x%02x%02x", p[0], p[1], p[2]);
-        } else {
-            goto fail;
-        }
-    } else if (st->codecpar->codec_id == AV_CODEC_ID_HEVC) {
-        uint8_t *data = st->codecpar->extradata;
-        int profile = AV_PROFILE_UNKNOWN;
-        int level = AV_LEVEL_UNKNOWN;
-
-        if (st->codecpar->profile != AV_PROFILE_UNKNOWN)
-            profile = st->codecpar->profile;
-        if (st->codecpar->level != AV_LEVEL_UNKNOWN)
-            level = st->codecpar->level;
-
-        /* check the boundary of data which from current position is small than extradata_size */
-        while (data && (data - st->codecpar->extradata + 19) < st->codecpar->extradata_size) {
-            /* get HEVC SPS NAL and seek to profile_tier_level */
-            if (!(data[0] | data[1] | data[2]) && data[3] == 1 && ((data[4] & 0x7E) == 0x42)) {
-                uint8_t *rbsp_buf;
-                int remain_size = 0;
-                int rbsp_size = 0;
-                /* skip start code + nalu header */
-                data += 6;
-                /* process by reference General NAL unit syntax */
-                remain_size = st->codecpar->extradata_size - (data - st->codecpar->extradata);
-                rbsp_buf = ff_nal_unit_extract_rbsp(data, remain_size, &rbsp_size, 0);
-                if (!rbsp_buf)
-                    return;
-                if (rbsp_size < 13) {
-                    av_freep(&rbsp_buf);
-                    break;
-                }
-                /* skip sps_video_parameter_set_id   u(4),
-                 *      sps_max_sub_layers_minus1    u(3),
-                 *  and sps_temporal_id_nesting_flag u(1) */
-                profile = rbsp_buf[1] & 0x1f;
-                /* skip 8 + 8 + 32 + 4 + 43 + 1 bit */
-                level = rbsp_buf[12];
-                av_freep(&rbsp_buf);
-                break;
-            }
-            data++;
-        }
-        if (st->codecpar->codec_tag == MKTAG('h','v','c','1') &&
-            profile != AV_PROFILE_UNKNOWN &&
-            level != AV_LEVEL_UNKNOWN) {
-            snprintf(attr, sizeof(attr), "%s.%d.4.L%d.B01", av_fourcc2str(st->codecpar->codec_tag), profile, level);
-        } else
-            goto fail;
-    } else if (st->codecpar->codec_id == AV_CODEC_ID_MP2) {
-        snprintf(attr, sizeof(attr), "mp4a.40.33");
-    } else if (st->codecpar->codec_id == AV_CODEC_ID_MP3) {
-        snprintf(attr, sizeof(attr), "mp4a.40.34");
-    } else if (st->codecpar->codec_id == AV_CODEC_ID_AAC) {
-        if (st->codecpar->profile != AV_PROFILE_UNKNOWN)
-            snprintf(attr, sizeof(attr), "mp4a.40.%d", st->codecpar->profile+1);
-        else
-            // This is for backward compatibility with the previous implementation.
-            snprintf(attr, sizeof(attr), "mp4a.40.2");
-    } else if (st->codecpar->codec_id == AV_CODEC_ID_AC3) {
-        snprintf(attr, sizeof(attr), "ac-3");
-    } else if (st->codecpar->codec_id == AV_CODEC_ID_EAC3) {
-        snprintf(attr, sizeof(attr), "ec-3");
-    } else {
+    av_bprint_init_for_buffer(&buffer, attr, sizeof(attr));
+    if (ff_make_codec_str(vs->avf, st->codecpar, &st->avg_frame_rate,
+                          &buffer) < 0)
         goto fail;
-    }
+
     // Don't write the same attribute multiple times
     if (!av_stristr(vs->codec_attr, attr)) {
         snprintf(vs->codec_attr + codec_strlen,
@@ -1140,7 +1064,7 @@ static int hls_append_segment(struct AVFormatContext *s, HLSContext *hls,
     if (hls->use_localtime_mkdir) {
         filename = vs->avf->url;
     }
-    if ((find_segment_by_filename(vs->segments, filename) || find_segment_by_filename(vs->old_segments, filename))
+    if (vs->nb_entries <= 5000 && (find_segment_by_filename(vs->segments, filename) || find_segment_by_filename(vs->old_segments, filename))
         && !byterange_mode) {
         av_log(hls, AV_LOG_WARNING, "Duplicated segment filename detected: %s\n", filename);
     }
@@ -1318,13 +1242,13 @@ static int parse_playlist(AVFormatContext *s, const char *url, VariantStream *vs
                 if (vs->has_subtitle) {
                     int vtt_index = extract_segment_number(line);
                     const char *vtt_basename = av_basename(vs->vtt_basename);
-                    int len = strlen(vtt_basename) + 11;
-                    char *vtt_file = av_mallocz(len);
-                    if (!vtt_file) {
+                    char *vtt_file = NULL;
+                    int ret = replace_int_data_in_filename(&vtt_file, vtt_basename, 'd', vtt_index);
+                    if (ret < 0 || !vtt_file) {
                         ret = AVERROR(ENOMEM);
                         goto fail;
                     }
-                    snprintf(vtt_file, len, vtt_basename, vtt_index);
+
                     ff_format_set_url(vs->vtt_avf, vtt_file);
                 }
 
@@ -3256,11 +3180,7 @@ const FFOutputFormat ff_hls_muxer = {
     .p.audio_codec    = AV_CODEC_ID_AAC,
     .p.video_codec    = AV_CODEC_ID_H264,
     .p.subtitle_codec = AV_CODEC_ID_WEBVTT,
-#if FF_API_ALLOW_FLUSH
-    .p.flags          = AVFMT_NOFILE | AVFMT_GLOBALHEADER | AVFMT_ALLOW_FLUSH | AVFMT_NODIMENSIONS,
-#else
     .p.flags          = AVFMT_NOFILE | AVFMT_GLOBALHEADER | AVFMT_NODIMENSIONS,
-#endif
     .p.priv_class     = &hls_class,
     .flags_internal   = FF_OFMT_FLAG_ALLOW_FLUSH,
     .priv_data_size = sizeof(HLSContext),

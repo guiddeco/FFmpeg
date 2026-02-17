@@ -180,9 +180,9 @@ static int query_formats(const AVFilterContext *ctx,
     int ret;
 
     if (s->tlut2 || !s->odepth)
-        return ff_set_common_formats_from_list2(ctx, cfg_in, cfg_out, all_pix_fmts);
+        return ff_set_pixel_formats_from_list2(ctx, cfg_in, cfg_out, all_pix_fmts);
 
-    ret = ff_formats_ref(ff_make_format_list(all_pix_fmts), &cfg_in[0]->formats);
+    ret = ff_formats_ref(ff_make_pixel_format_list(all_pix_fmts), &cfg_in[0]->formats);
     if (ret < 0)
         return ret;
 
@@ -196,7 +196,7 @@ static int query_formats(const AVFilterContext *ctx,
     default: av_assert0(0);
     }
 
-    return ff_formats_ref(ff_make_format_list(pix_fmts), &cfg_out[0]->formats);
+    return ff_formats_ref(ff_make_pixel_format_list(pix_fmts), &cfg_out[0]->formats);
 }
 
 static int config_inputx(AVFilterLink *inlink)
@@ -564,19 +564,19 @@ static int process_command(AVFilterContext *ctx, const char *cmd, const char *ar
 
 FRAMESYNC_DEFINE_CLASS(lut2, LUT2Context, fs);
 
-const AVFilter ff_vf_lut2 = {
-    .name          = "lut2",
-    .description   = NULL_IF_CONFIG_SMALL("Compute and apply a lookup table from two video inputs."),
+const FFFilter ff_vf_lut2 = {
+    .p.name        = "lut2",
+    .p.description = NULL_IF_CONFIG_SMALL("Compute and apply a lookup table from two video inputs."),
+    .p.priv_class  = &lut2_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL |
+                     AVFILTER_FLAG_SLICE_THREADS,
     .preinit       = lut2_framesync_preinit,
     .priv_size     = sizeof(LUT2Context),
-    .priv_class    = &lut2_class,
     .uninit        = uninit,
     .activate      = activate,
     FILTER_INPUTS(inputs),
     FILTER_OUTPUTS(outputs),
     FILTER_QUERY_FUNC2(query_formats),
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL |
-                     AVFILTER_FLAG_SLICE_THREADS,
     .process_command = process_command,
 };
 
@@ -663,18 +663,18 @@ static const AVFilterPad tlut2_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_tlut2 = {
-    .name          = "tlut2",
-    .description   = NULL_IF_CONFIG_SMALL("Compute and apply a lookup table from two successive frames."),
+const FFFilter ff_vf_tlut2 = {
+    .p.name        = "tlut2",
+    .p.description = NULL_IF_CONFIG_SMALL("Compute and apply a lookup table from two successive frames."),
+    .p.priv_class  = &tlut2_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL |
+                     AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(LUT2Context),
-    .priv_class    = &tlut2_class,
     .init          = init,
     .uninit        = uninit,
     FILTER_INPUTS(tlut2_inputs),
     FILTER_OUTPUTS(tlut2_outputs),
     FILTER_QUERY_FUNC2(query_formats),
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL |
-                     AVFILTER_FLAG_SLICE_THREADS,
     .process_command = process_command,
 };
 

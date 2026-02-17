@@ -21,6 +21,7 @@
 
 #include "config_components.h"
 
+#include "libavutil/attributes_internal.h"
 #include "libavutil/buffer.h"
 #include "libavutil/crc.h"
 #include "libavutil/internal.h"
@@ -202,7 +203,7 @@ static const AVOption options[] = {
      {.i64 = -1}, -1, 1, AV_OPT_FLAG_DECODING_PARAM },
     {"skip_unknown_pmt", "skip PMTs for programs not advertised in the PAT", offsetof(MpegTSContext, skip_unknown_pmt), AV_OPT_TYPE_BOOL,
      {.i64 = 0}, 0, 1, AV_OPT_FLAG_DECODING_PARAM },
-    {"merge_pmt_versions", "re-use streams when PMT's version/pids change", offsetof(MpegTSContext, merge_pmt_versions), AV_OPT_TYPE_BOOL,
+    {"merge_pmt_versions", "reuse streams when PMT's version/pids change", offsetof(MpegTSContext, merge_pmt_versions), AV_OPT_TYPE_BOOL,
      {.i64 = 0}, 0, 1,  AV_OPT_FLAG_DECODING_PARAM },
     {"skip_changes", "skip changing / adding streams / programs", offsetof(MpegTSContext, skip_changes), AV_OPT_TYPE_BOOL,
      {.i64 = 0}, 0, 1, 0 },
@@ -274,7 +275,7 @@ typedef struct PESContext {
     int merged_st;
 } PESContext;
 
-extern const FFInputFormat ff_mpegts_demuxer;
+EXTERN const FFInputFormat ff_mpegts_demuxer;
 
 static struct Program * get_program(MpegTSContext *ts, unsigned int programid)
 {
@@ -814,6 +815,7 @@ static const StreamType ISO_types[] = {
     { STREAM_TYPE_VIDEO_MVC,      AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_H264       },
     { STREAM_TYPE_VIDEO_JPEG2000, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_JPEG2000   },
     { STREAM_TYPE_VIDEO_HEVC,     AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_HEVC       },
+    { STREAM_TYPE_VIDEO_JPEGXS,   AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_JPEGXS     },
     { STREAM_TYPE_VIDEO_VVC,      AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_VVC        },
     { STREAM_TYPE_VIDEO_CAVS,     AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_CAVS       },
     { STREAM_TYPE_VIDEO_DIRAC,    AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_DIRAC      },
@@ -939,6 +941,8 @@ static int mpegts_set_stream_info(AVStream *st, PESContext *pes,
     mpegts_find_stream_type(st, pes->stream_type, ISO_types);
     if (pes->stream_type == STREAM_TYPE_AUDIO_MPEG2 || pes->stream_type == STREAM_TYPE_AUDIO_AAC)
         sti->request_probe = 50;
+    if (pes->stream_type == STREAM_TYPE_PRIVATE_DATA)
+        sti->request_probe = AVPROBE_SCORE_STREAM_RETRY;
     if ((prog_reg_desc == AV_RL32("HDMV") ||
          prog_reg_desc == AV_RL32("HDPR")) &&
         st->codecpar->codec_id == AV_CODEC_ID_NONE) {
@@ -1025,6 +1029,23 @@ static int new_pes_packet(PESContext *pes, AVPacket *pkt)
         av_log(pes->stream, AV_LOG_WARNING, "PES packet size mismatch\n");
         pes->flags |= AV_PKT_FLAG_CORRUPT;
     }
+
+    // JPEG-XS PES payload
+    if (pes->stream_id == 0xbd && pes->stream_type == 0x32 &&
+        pkt->size >= 8 && memcmp(pkt->data + 4, "jxes", 4) == 0)
+    {
+        uint32_t header_size = AV_RB32(pkt->data);
+        if (header_size > pkt->size) {
+            av_log(pes->stream, AV_LOG_WARNING,
+                   "Invalid JPEG-XS header size %"PRIu32" > packet size %d\n",
+                   header_size, pkt->size);
+            pes->flags |= AV_PKT_FLAG_CORRUPT;
+            return AVERROR_INVALIDDATA;
+        }
+        pkt->data += header_size;
+        pkt->size -= header_size;
+    }
+
     memset(pkt->data + pkt->size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
 
     // Separate out the AC3 substream from an HDMV combined TrueHD/AC3 PID
@@ -1813,6 +1834,92 @@ static const uint8_t opus_channel_map[8][8] = {
     { 0,6,1,2,3,4,5,7 },
 };
 
+static int parse_mpeg2_extension_descriptor(AVFormatContext *fc, AVStream *st,
+                                            const uint8_t **pp, const uint8_t *desc_end)
+{
+    int ext_tag = get8(pp, desc_end);
+
+    switch (ext_tag) {
+    case JXS_VIDEO_DESCRIPTOR: /* JPEG-XS video descriptor*/
+        {
+            int horizontal_size, vertical_size, schar;
+            int colour_primaries, transfer_characteristics, matrix_coefficients, video_full_range_flag;
+            int descriptor_version, interlace_mode, n_fields;
+            unsigned frat;
+
+            if (desc_end - *pp < 29)
+                return AVERROR_INVALIDDATA;
+
+            descriptor_version = get8(pp, desc_end);
+            if (descriptor_version) {
+                av_log(fc, AV_LOG_WARNING, "Unsupported JPEG-XS descriptor version (%d != 0)", descriptor_version);
+                return AVERROR_INVALIDDATA;
+            }
+
+            horizontal_size = get16(pp, desc_end);
+            vertical_size = get16(pp, desc_end);
+            *pp += 4; /* brat */
+            frat = bytestream_get_be32(pp);
+            schar = get16(pp, desc_end);
+            *pp += 2; /* Ppih */
+            *pp += 2; /* Plev */
+            *pp += 4; /* max_buffer_size */
+            *pp += 1; /* buffer_model_type */
+            colour_primaries = get8(pp, desc_end);
+            transfer_characteristics = get8(pp, desc_end);
+            matrix_coefficients = get8(pp, desc_end);
+            video_full_range_flag = (get8(pp, desc_end) & 0x80) == 0x80 ? 1 : 0;
+
+            interlace_mode = (frat >> 30) & 0x3;
+            if (interlace_mode == 3) {
+                av_log(fc, AV_LOG_WARNING, "Unknown JPEG XS interlace mode 3");
+                return AVERROR_INVALIDDATA;
+            }
+
+            st->codecpar->field_order = interlace_mode == 0 ? AV_FIELD_PROGRESSIVE
+                                                            : (interlace_mode == 1 ? AV_FIELD_TT : AV_FIELD_BB);
+            n_fields = st->codecpar->field_order == AV_FIELD_PROGRESSIVE ? 1 : 2;
+
+            st->codecpar->width  = horizontal_size;
+            st->codecpar->height = vertical_size * n_fields;
+
+            if (frat != 0) {
+                int framerate_num = (frat & 0x0000FFFFU);
+                int framerate_den = ((frat >> 24) & 0x0000003FU);
+
+                if (framerate_den == 2) {
+                    framerate_num *= 1000;
+                    framerate_den = 1001;
+                } else if (framerate_den != 1) {
+                    av_log(fc, AV_LOG_WARNING, "Unknown JPEG XS framerate denominator code %u", framerate_den);
+                    return AVERROR_INVALIDDATA;
+                }
+
+                st->codecpar->framerate.num = framerate_num;
+                st->codecpar->framerate.den = framerate_den;
+            }
+
+            switch (schar & 0xf) {
+            case 0: st->codecpar->format = AV_PIX_FMT_YUV422P10LE; break;
+            case 1: st->codecpar->format = AV_PIX_FMT_YUV444P10LE; break;
+            default:
+                av_log(fc, AV_LOG_WARNING, "Unknown JPEG XS sampling format");
+                break;
+            }
+
+            st->codecpar->color_range = video_full_range_flag ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+            st->codecpar->color_primaries = colour_primaries;
+            st->codecpar->color_trc = transfer_characteristics;
+            st->codecpar->color_space = matrix_coefficients;
+        }
+        break;
+    default:
+        break;
+    }
+
+    return 0;
+}
+
 int ff_parse_mpeg2_descriptor(AVFormatContext *fc, AVStream *st, int stream_type,
                               const uint8_t **pp, const uint8_t *desc_list_end,
                               Mp4Descr *mp4_descr, int mp4_descr_count, int pid,
@@ -2040,7 +2147,7 @@ int ff_parse_mpeg2_descriptor(AVFormatContext *fc, AVStream *st, int stream_type
                 mpegts_find_stream_type(st, st->codecpar->codec_tag, METADATA_types);
         }
         break;
-    case EXTENSION_DESCRIPTOR: /* DVB extension descriptor */
+    case DVB_EXTENSION_DESCRIPTOR: /* DVB extension descriptor */
         ext_desc_tag = get8(pp, desc_end);
         if (ext_desc_tag < 0)
             return AVERROR_INVALIDDATA;
@@ -2245,6 +2352,14 @@ int ff_parse_mpeg2_descriptor(AVFormatContext *fc, AVStream *st, int stream_type
                    dovi->dv_md_compression);
         }
         break;
+    case EXTENSION_DESCRIPTOR: /* descriptor extension */
+        {
+            int ret = parse_mpeg2_extension_descriptor(fc, st, pp, desc_end);
+
+            if (ret < 0)
+                return ret;
+        }
+        break;
     default:
         break;
     }
@@ -2270,7 +2385,7 @@ static AVStream *find_matching_stream(MpegTSContext *ts, int pid, unsigned int p
 
     if (found) {
         av_log(ts->stream, AV_LOG_VERBOSE,
-               "re-using existing %s stream %d (pid=0x%x) for new pid=0x%x\n",
+               "reusing existing %s stream %d (pid=0x%x) for new pid=0x%x\n",
                av_get_media_type_string(found->codecpar->codec_type),
                found->index, found->id, pid);
     }
@@ -2394,7 +2509,8 @@ static void pmt_cb(MpegTSFilter *filter, const uint8_t *section, int section_len
     av_log(ts->stream, AV_LOG_TRACE, "pcr_pid=0x%x\n", pcr_pid);
 
     program_info_length = get16(&p, p_end);
-    if (program_info_length < 0)
+
+    if (program_info_length < 0 || (program_info_length & 0xFFF) > p_end - p)
         return;
     program_info_length &= 0xfff;
     while (program_info_length >= 2) {
@@ -2409,7 +2525,7 @@ static void pmt_cb(MpegTSFilter *filter, const uint8_t *section, int section_len
             // something else is broken, exit the program_descriptors_loop
             break;
         program_info_length -= len;
-        if (tag == IOD_DESCRIPTOR) {
+        if (tag == IOD_DESCRIPTOR && len >= 2) {
             get8(&p, p_end); // scope
             get8(&p, p_end); // label
             len -= 2;
@@ -2507,7 +2623,7 @@ static void pmt_cb(MpegTSFilter *filter, const uint8_t *section, int section_len
         if (!st)
             goto out;
 
-        if (pes && !pes->stream_type)
+        if (pes && pes->stream_type != stream_type)
             mpegts_set_stream_info(st, pes, stream_type, prog_reg_desc);
 
         add_pid_to_program(prg, pid);
@@ -3328,7 +3444,7 @@ static int mpegts_read_close(AVFormatContext *s)
     return 0;
 }
 
-static av_unused int64_t mpegts_get_pcr(AVFormatContext *s, int stream_index,
+av_unused static int64_t mpegts_get_pcr(AVFormatContext *s, int stream_index,
                               int64_t *ppos, int64_t pos_limit)
 {
     MpegTSContext *ts = s->priv_data;
