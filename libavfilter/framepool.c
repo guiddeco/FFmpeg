@@ -24,6 +24,7 @@
 #include "libavutil/buffer.h"
 #include "libavutil/frame.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/imgutils_internal.h"
 #include "libavutil/mem.h"
 #include "libavutil/pixfmt.h"
 
@@ -56,10 +57,8 @@ FFFramePool *ff_frame_pool_video_init(AVBufferRef* (*alloc)(size_t size),
 {
     int i, ret;
     FFFramePool *pool;
-    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(format);
-
-    if (!desc)
-        return NULL;
+    ptrdiff_t linesizes[4];
+    size_t sizes[4];
 
     pool = av_mallocz(sizeof(FFFramePool));
     if (!pool)
@@ -76,35 +75,33 @@ FFFramePool *ff_frame_pool_video_init(AVBufferRef* (*alloc)(size_t size),
     }
 
     if (!pool->linesize[0]) {
-        for(i = 1; i <= align; i += i) {
-            ret = av_image_fill_linesizes(pool->linesize, pool->format,
-                                          FFALIGN(pool->width, i));
-            if (ret < 0) {
-                goto fail;
-            }
-            if (!(pool->linesize[0] & (pool->align - 1)))
-                break;
+        ret = av_image_fill_linesizes(pool->linesize, pool->format,
+                                      FFALIGN(pool->width, align));
+        if (ret < 0) {
+            goto fail;
         }
 
         for (i = 0; i < 4 && pool->linesize[i]; i++) {
             pool->linesize[i] = FFALIGN(pool->linesize[i], pool->align);
+            if ((pool->linesize[i] & (pool->align - 1)))
+                goto fail;
         }
     }
 
-    for (i = 0; i < 4 && pool->linesize[i]; i++) {
-        int h = FFALIGN(pool->height, 32);
-        if (i == 1 || i == 2)
-            h = AV_CEIL_RSHIFT(h, desc->log2_chroma_h);
+    for (i = 0; i < 4; i++)
+        linesizes[i] = pool->linesize[i];
 
-        pool->pools[i] = av_buffer_pool_init(pool->linesize[i] * h + 16 + 16 - 1,
-                                             alloc);
-        if (!pool->pools[i])
-            goto fail;
+    if (av_image_fill_plane_sizes(sizes, pool->format,
+                                  pool->height,
+                                  linesizes) < 0) {
+        goto fail;
     }
 
-    if (desc->flags & AV_PIX_FMT_FLAG_PAL) {
-        pool->pools[1] = av_buffer_pool_init(AVPALETTE_SIZE, alloc);
-        if (!pool->pools[1])
+    for (i = 0; i < 4 && sizes[i]; i++) {
+        if (sizes[i] > SIZE_MAX - align)
+            goto fail;
+        pool->pools[i] = av_buffer_pool_init(sizes[i] + align, alloc);
+        if (!pool->pools[i])
             goto fail;
     }
 
@@ -142,7 +139,9 @@ FFFramePool *ff_frame_pool_audio_init(AVBufferRef* (*alloc)(size_t size),
     if (ret < 0)
         goto fail;
 
-    pool->pools[0] = av_buffer_pool_init(pool->linesize[0], NULL);
+    if (pool->linesize[0] > SIZE_MAX - align)
+        goto fail;
+    pool->pools[0] = av_buffer_pool_init(pool->linesize[0] + align, NULL);
     if (!pool->pools[0])
         goto fail;
 
@@ -222,7 +221,7 @@ AVFrame *ff_frame_pool_get(FFFramePool *pool)
             if (!frame->buf[i])
                 goto fail;
 
-            frame->data[i] = frame->buf[i]->data;
+            frame->data[i] = (uint8_t *)FFALIGN((uintptr_t)frame->buf[i]->data, pool->align);
         }
 
         if (desc->flags & AV_PIX_FMT_FLAG_PAL) {
@@ -238,7 +237,7 @@ AVFrame *ff_frame_pool_get(FFFramePool *pool)
         break;
     case AVMEDIA_TYPE_AUDIO:
         frame->nb_samples = pool->nb_samples;
-        frame->channels = pool->channels;
+        frame->ch_layout.nb_channels = pool->channels;
         frame->format = pool->format;
         frame->linesize[0] = pool->linesize[0];
 
@@ -259,13 +258,15 @@ AVFrame *ff_frame_pool_get(FFFramePool *pool)
             frame->buf[i] = av_buffer_pool_get(pool->pools[0]);
             if (!frame->buf[i])
                 goto fail;
-            frame->extended_data[i] = frame->data[i] = frame->buf[i]->data;
+            frame->extended_data[i] = frame->data[i] =
+                (uint8_t *)FFALIGN((uintptr_t)frame->buf[i]->data, pool->align);
         }
         for (i = 0; i < frame->nb_extended_buf; i++) {
             frame->extended_buf[i] = av_buffer_pool_get(pool->pools[0]);
             if (!frame->extended_buf[i])
                 goto fail;
-            frame->extended_data[i + AV_NUM_DATA_POINTERS] = frame->extended_buf[i]->data;
+            frame->extended_data[i + AV_NUM_DATA_POINTERS] =
+                (uint8_t *)FFALIGN((uintptr_t)frame->extended_buf[i]->data, pool->align);
         }
 
         break;

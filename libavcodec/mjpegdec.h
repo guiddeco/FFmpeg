@@ -36,6 +36,8 @@
 
 #include "avcodec.h"
 #include "blockdsp.h"
+#include "bytestream.h"
+#include "exif.h"
 #include "get_bits.h"
 #include "hpeldsp.h"
 #include "idctdsp.h"
@@ -55,11 +57,9 @@ typedef struct MJpegDecodeContext {
     AVClass *class;
     AVCodecContext *avctx;
     GetBitContext gb;
+    GetByteContext gB;
     int buf_size;
 
-    AVPacket *pkt;
-
-    int start_code; /* current start code */
     int buffer_size;
     uint8_t *buffer;
 
@@ -111,22 +111,20 @@ typedef struct MJpegDecodeContext {
     AVFrame *picture_ptr; /* pointer to picture structure */
     int got_picture;                                ///< we found a SOF and picture is valid, too.
     int linesize[MAX_COMPONENTS];                   ///< linesize << interlaced
-    int8_t *qscale_table;
     DECLARE_ALIGNED(32, int16_t, block)[64];
     int16_t (*blocks[MAX_COMPONENTS])[64]; ///< intermediate sums (progressive mode)
     uint8_t *last_nnz[MAX_COMPONENTS];
     uint64_t coefs_finished[MAX_COMPONENTS]; ///< bitmask of which coefs have been completely decoded (progressive mode)
     int palette_index;
     int force_pal8;
-    ScanTable scantable;
+    uint8_t permutated_scantable[64];
     BlockDSPContext bdsp;
-    HpelDSPContext hdsp;
     IDCTDSPContext idsp;
+    op_pixels_func copy_block;             ///< only set and used by mxpeg
 
     int restart_interval;
     int restart_count;
 
-    int buggy_avid;
     int cs_itu601;
     int interlace_polarity;
     int multiscope;
@@ -140,7 +138,7 @@ typedef struct MJpegDecodeContext {
     unsigned int ljpeg_buffer_size;
 
     int extern_huff;
-    AVDictionary *exif_metadata;
+    AVExifMetadata exif_metadata;
 
     AVStereo3D *stereo3d; ///!< stereoscopic information (cached, since it is read before frame allocation)
 
@@ -173,7 +171,12 @@ int ff_mjpeg_build_vlc(VLC *vlc, const uint8_t *bits_table,
                        const uint8_t *val_table, int is_ac, void *logctx);
 int ff_mjpeg_decode_init(AVCodecContext *avctx);
 int ff_mjpeg_decode_end(AVCodecContext *avctx);
-int ff_mjpeg_receive_frame(AVCodecContext *avctx, AVFrame *frame);
+int ff_mjpeg_decode_frame(AVCodecContext *avctx,
+                          AVFrame *frame, int *got_frame,
+                          AVPacket *avpkt);
+int ff_mjpeg_decode_frame_from_buf(AVCodecContext *avctx,
+                                   AVFrame *frame, int *got_frame,
+                                   const AVPacket *avpkt, const uint8_t *buf, int buf_size);
 int ff_mjpeg_decode_dqt(MJpegDecodeContext *s);
 int ff_mjpeg_decode_dht(MJpegDecodeContext *s);
 int ff_mjpeg_decode_sof(MJpegDecodeContext *s);
@@ -183,7 +186,5 @@ int ff_mjpeg_decode_sos(MJpegDecodeContext *s,
 int ff_mjpeg_find_marker(MJpegDecodeContext *s,
                          const uint8_t **buf_ptr, const uint8_t *buf_end,
                          const uint8_t **unescaped_buf_ptr, int *unescaped_buf_size);
-
-int ff_sp5x_process_packet(AVCodecContext *avctx, AVPacket *avpkt);
 
 #endif /* AVCODEC_MJPEGDEC_H */

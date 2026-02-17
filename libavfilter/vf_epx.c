@@ -18,7 +18,9 @@
 
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
-#include "internal.h"
+
+#include "filters.h"
+#include "video.h"
 
 typedef struct EPXContext {
     const AVClass *class;
@@ -100,7 +102,7 @@ static int epx2_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
             src_line[1] = src_line[2];
             src_line[2] = src_line[1];
 
-            if (y < height - 1)
+            if (y < height - 2)
                 src_line[2] += src_linesize;
         }
     }
@@ -187,7 +189,7 @@ static int epx3_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
             src_line[1] = src_line[2];
             src_line[2] = src_line[1];
 
-            if (y < height - 1)
+            if (y < height - 2)
                 src_line[2] += src_linesize;
         }
     }
@@ -265,13 +267,13 @@ static const AVFilterPad outputs[] = {
     },
 };
 
-const AVFilter ff_vf_epx = {
-    .name          = "epx",
-    .description   = NULL_IF_CONFIG_SMALL("Scale the input using EPX algorithm."),
+const FFFilter ff_vf_epx = {
+    .p.name        = "epx",
+    .p.description = NULL_IF_CONFIG_SMALL("Scale the input using EPX algorithm."),
+    .p.priv_class  = &epx_class,
+    .p.flags       = AVFILTER_FLAG_SLICE_THREADS,
     FILTER_INPUTS(inputs),
     FILTER_OUTPUTS(outputs),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
     .priv_size     = sizeof(EPXContext),
-    .priv_class    = &epx_class,
-    .flags         = AVFILTER_FLAG_SLICE_THREADS,
 };
